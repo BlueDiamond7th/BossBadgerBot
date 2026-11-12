@@ -16,10 +16,10 @@ cd "$target"
 docker compose -p maple-bot build --pull
 previous=$(readlink -f "$root/current" 2>/dev/null || true)
 if [[ -n "$previous" && -d "$previous" ]]; then
-  (cd "$previous"; RELEASE_ID=$(basename "$previous") docker compose -p maple-bot exec -T bot node scripts/backup.js)
+  (cd "$previous"; RELEASE_ID=$(basename "$previous") docker compose -p maple-bot exec -T bot node scripts/backup.js </dev/null)
 fi
 if docker compose -p maple-bot up -d --wait --wait-timeout 120 &&
-  docker compose -p maple-bot exec -T bot node scripts/register.js; then
+  docker compose -p maple-bot exec -T bot node scripts/register.js </dev/null; then
   ln -sfn "$target" "$root/current"
   echo "Deployment healthy: $release"
 else
@@ -28,7 +28,7 @@ else
     (cd "$previous"
       export RELEASE_ID=$(basename "$previous")
       docker compose -p maple-bot up -d --wait --wait-timeout 120
-      docker compose -p maple-bot exec -T bot node scripts/register.js
+      docker compose -p maple-bot exec -T bot node scripts/register.js </dev/null
     )
   else
     docker compose -p maple-bot down
