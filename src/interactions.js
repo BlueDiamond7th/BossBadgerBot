@@ -101,7 +101,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,onC
           }
           if(sub==='수정') {service.editCharacter(ctx,get('캐릭터'),{name:get('이름')??undefined},rid);changed=true;payload=view.roster(service.snapshot(ctx),0,ctx.userId);}
           if(sub==='스펙') payload=specs(ctx,get('캐릭터'));
-          if(sub==='스펙갱신') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');const result=await tracker.sync(ctx,get('캐릭터'));changed=!result.cached;payload=specs(ctx,get('캐릭터'));if(result.cached)payload.content='10분 이내 수집한 기록을 보여드려요.';}
+          if(sub==='스펙갱신') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');const result=await tracker.sync(ctx,get('캐릭터'));changed=!result.cached;payload=specs(ctx,get('캐릭터'));}
           if(sub==='환산기록') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');tracker.recordManual(ctx,get('캐릭터'),i.options.getNumber('수치'),get('종류'),rid);payload=specs(ctx,get('캐릭터'));}
           if(sub==='해제') {service.unregister(ctx,get('캐릭터'),rid);changed=true;payload={content:'내 캐릭터의 보스방 등록을 해제했어요. 과거 보관 데이터는 유지돼요.'};}
         } else if(i.commandName==='파티') {
@@ -134,7 +134,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,onC
         if(action==='schedulersync') {requireRule(tracker,'스케줄러 기능을 사용할 수 없어요.');const result=await tracker.syncScheduler(ctx,id);payload=scheduler(ctx,id);if(result.cached)payload.content='5분 이내 수집한 기록을 보여드려요.';}
         if(action==='specpicker') payload=view.specPicker(service.snapshot(ctx),Number(id));
         if(action==='selectspec'||action==='spec') payload=specs(ctx,selected??id,Number(a)||0,Number(b)||0);
-        if(action==='specsync') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');const result=await tracker.sync(ctx,id);changed=!result.cached;payload=specs(ctx,id);if(result.cached)payload.content='10분 이내 수집한 기록을 보여드려요.';}
+        if(action==='specsync') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');const result=await tracker.sync(ctx,id);changed=!result.cached;payload=specs(ctx,id);}
         if(action==='board') {payload=view.board(service.snapshot(ctx));changed=true;}
         if(action==='roster') {
           const s=service.snapshot(ctx),page=Number(a),shown=view.paginate(s.characters.filter(c=>c.active&&(id==='all'||c.ownerId===id)),page,10).items;

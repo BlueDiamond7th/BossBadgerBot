@@ -11,7 +11,6 @@ export function specChanges(previous,current) {
     const diff=BigInt(current[key])-BigInt(previous[key]);
     lines.push(`${label}: ${previous[key]} → ${current[key]} (${diff>=0n?'+':''}${diff})`);
   }
-  if(previous.preset!==current.preset) lines.push(`장비 프리셋: ${previous.preset??'미확인'} → ${current.preset??'미확인'} (세팅 전환일 수 있어요)`);
   for(const slot of new Set([...Object.keys(previous.equipment),...Object.keys(current.equipment)])) {
     const before=previous.equipment[slot],after=current.equipment[slot];
     if(stable(before)===stable(after)) continue;
@@ -86,7 +85,7 @@ export class SpecTracker {
     if(this.inflight.has(key)) return this.inflight.get(key);
     const session=this.connections?.session(ctx,c);
     const history=this.history(ctx,id),latest=history[0];
-    if(latest&&(automatic?latest.day===kstDay(this.now()):this.now()-latest.collectedAt<10*60_000)) return {cached:true};
+    if(automatic&&latest?.day===kstDay(this.now())) return {cached:true};
     const work=(async()=>{
       const profile=this.repo.db.prepare('SELECT ocid FROM spec_profiles WHERE guild_id=? AND thread_id=? AND character_id=?').get(ctx.guildId,ctx.threadId,id);
       const result=await (session?.api??this.api).collect(c.name,session?.ocid??profile?.ocid);

@@ -93,9 +93,9 @@ export function specPicker(state,page=0) {
 const stamp=time=>new Date(time).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',hour12:false});
 export function specDetail(character,history,manual,ctx,index=0,page=0) {
   const pos=paginate(history,index,1),current=pos.items[0],previous=history[pos.page+1];
-  const changes=current?specChanges(previous,current):['아직 수집한 스펙이 없어요. 스펙 갱신을 누르거나 자동 수집을 기다려 주세요.'];
+  const changes=current?specChanges(previous,current):['아직 수집한 스펙이 없어요. 스펙 확인을 누르거나 자동 수집을 기다려 주세요.'];
   const list=paginate(changes,page,8);
-  const emb=base().setTitle(`${safe(character.name)} · 스펙 변화`).setDescription(current?`${stamp(current.collectedAt)} 수집 (한국 시간)\n레벨 **${current.level}** · 전투력 **${BigInt(current.combatPower).toLocaleString('ko-KR')}**\n${previous?`${stamp(previous.collectedAt)} 기록과 비교`:'첫 수집 기록'}\n장비 세팅·버프·프리셋에 따라 수치가 달라질 수 있어요.`:'넥슨 API 연결 후 자동으로 기록해요.');
+  const emb=base().setTitle(`${safe(character.name)} · 스펙 변화`).setDescription(current?`${stamp(current.collectedAt)} 수집 (한국 시간)\n레벨 **${current.level}** · 전투력 **${BigInt(current.combatPower).toLocaleString('ko-KR')}**\n${previous?`${stamp(previous.collectedAt)} 기록과 비교`:'첫 수집 기록'}\nAPI 반영이 지연될 수 있어요. 스펙 확인을 누르면 다시 조회해요.`:'넥슨 API 연결 후 자동으로 기록해요.');
   emb.addFields({name:`변화 ${list.page+1}/${list.pages} · ${changes.length}개`,value:list.items.map(line=>safe(line).slice(0,115)).join('\n').slice(0,1024)});
   if(current?.unavailable?.length) emb.addFields({name:'미제공 항목',value:`${safe(current.unavailable.join(', '))} — 이 항목의 변화는 비교하지 않아요.`});
   const manualLines=[];
@@ -108,7 +108,7 @@ export function specDetail(character,history,manual,ctx,index=0,page=0) {
   const components=[row(button(`mp:spec:${character.id}:${pos.page-1}:0`,'더 최근 기록',ButtonStyle.Secondary,pos.page===0),button(`mp:spec:${character.id}:${pos.page+1}:0`,'이전 기록',ButtonStyle.Secondary,pos.page>=pos.pages-1)),
     row(button(`mp:spec:${character.id}:${pos.page}:${list.page-1}`,'이전 변화',ButtonStyle.Secondary,list.page===0),button(`mp:spec:${character.id}:${pos.page}:${list.page+1}`,'다음 변화',ButtonStyle.Secondary,list.page>=list.pages-1))];
   const links=[new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('환산 사이트 열기').setURL(`https://maplescouter.com/ko/info?name=${encodeURIComponent(character.name)}`)];
-  if(character.ownerId===ctx.userId) links.unshift(button(`mp:specsync:${character.id}`,'스펙 갱신',ButtonStyle.Primary),button(`mp:scheduler:${character.id}:0:0`,'내 스케줄러'));
+  if(character.ownerId===ctx.userId) links.unshift(button(`mp:specsync:${character.id}`,'스펙 확인',ButtonStyle.Primary),button(`mp:scheduler:${character.id}:0:0`,'내 스케줄러'));
   components.push(row(...links),home());
   return {embeds:[emb],components,allowedMentions:{parse:[]}};
 }

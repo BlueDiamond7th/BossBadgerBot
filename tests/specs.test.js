@@ -18,14 +18,15 @@ function fixture(t,collect=async()=>result()) {
   const api={collect},tracker=new SpecTracker({repository,service,api,now:()=>now});
   return {repository,service,c,tracker,advance:ms=>now+=ms};
 }
-test('sync fills profile, keeps daily history, uses stable OCID, and throttles refresh',async t=>{
+test('sync fills profile, keeps daily history, uses stable OCID, refreshes manually and caches automatic collection',async t=>{
   const calls=[];const f=fixture(t,async(name,ocid)=>{calls.push([name,ocid]);return result();});
   await f.tracker.sync(ctx,f.c.id);
   assert.equal(f.service.snapshot(ctx).characters[0].world,'루나');
-  assert.equal((await f.tracker.sync(ctx,f.c.id)).cached,true);
+  assert.equal((await f.tracker.sync(ctx,f.c.id)).cached,false);
+  assert.equal((await f.tracker.sync(ctx,f.c.id,{automatic:true})).cached,true);
   f.advance(86400_000);await f.tracker.sync(ctx,f.c.id,{automatic:true});
-  assert.deepEqual(calls,[['캐릭터',undefined],['캐릭터','private-ocid']]);
-  assert.equal(f.tracker.history(ctx,f.c.id).length,2);
+  assert.deepEqual(calls,[['캐릭터',undefined],['캐릭터','private-ocid'],['캐릭터','private-ocid']]);
+  assert.equal(f.tracker.history(ctx,f.c.id).length,3);
   assert.throws(()=>f.service.editCharacter(ctx,f.c.id,{name:'다른캐릭터'},'rename'),{code:'LINKED_CHARACTER'});
 });
 test('failed collection preserves prior data; concurrent sync coalesces',async t=>{
