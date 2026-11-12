@@ -4,6 +4,10 @@ import { PartyService } from './service.js';
 import { createHandler } from './interactions.js';
 import { createBoardRefresher } from './board.js';
 import { loadConfig } from './config.js';
+import { NexonClient } from './nexon.js';
+import { SpecTracker } from './specs.js';
+import { isParticipant, supportedChannel } from './access.js';
+import { randomUUID } from 'node:crypto';
 import { writeFileSync, rmSync } from 'node:fs';
 
 let config;
@@ -19,15 +23,32 @@ const heartbeat=healthFile?setInterval(()=>{
   else rmSync(healthFile,{force:true});
 },5000):null;
 heartbeat?.unref();
-const handle=createHandler({service,guildId:config.guildId,refreshBoard:createBoardRefresher(service)});
+const refreshBoard=createBoardRefresher(service);
+const api=new NexonClient({apiKey:config.nexonApiKey,reserve:()=>tracker.reserve()});
+const tracker=new SpecTracker({repository,service,api});
+const handle=createHandler({service,guildId:config.guildId,tracker,refreshBoard});
+let specTimer=null,sweepTask=null;
+function collectSpecs() {
+  if(stopping||sweepTask||!client.isReady()) return;
+  tracker.prune();
+  if(!config.nexonApiKey) return;
+  sweepTask=tracker.sweep({guildId:config.guildId,canCollect:async ctx=>{
+    const channel=await client.channels.fetch(ctx.threadId);
+    return supportedChannel(channel)&&!channel.archived&&!channel.locked&&await isParticipant(channel,ctx.userId);
+  },onUpdate:async ctx=>{
+    const channel=await client.channels.fetch(ctx.threadId);
+    await refreshBoard({channel,id:`spec-${randomUUID()}`},ctx);
+  }}).catch(()=>console.warn('[spec-sync] FAILED')).finally(()=>{sweepTask=null;});
+}
 client.once(Events.ClientReady,ready=>{
   if(ready.application.id!==config.applicationId) {console.error('DISCORD_TOKEN과 DISCORD_APPLICATION_ID가 같은 앱의 값인지 확인해 주세요.');client.destroy();repository.close();process.exitCode=1;return;}
   console.log('봇 연결 완료. 스레드에서 /보스방 시작을 실행하세요.');
+  collectSpecs();specTimer=setInterval(collectSpecs,3600_000);specTimer.unref();
   ready.user.setActivity('/보스방 시작',{type:ActivityType.Listening});
 });
 client.on(Events.InteractionCreate,interaction=>{void handle(interaction).catch(error=>console.error('[handler]',error.code??error.name));});
 client.on(Events.Error,error=>console.error('[discord]',error.code??error.name));
 let stopping=false;
-async function stop() {if(stopping)return;stopping=true;clearInterval(heartbeat);if(healthFile)rmSync(healthFile,{force:true});await client.destroy();repository.close();}
+async function stop() {if(stopping)return;stopping=true;clearInterval(heartbeat);clearInterval(specTimer);await tracker.stop();await sweepTask;if(healthFile)rmSync(healthFile,{force:true});await client.destroy();repository.close();}
 process.once('SIGINT',()=>void stop());process.once('SIGTERM',()=>void stop());
 try {await client.login(config.token);} catch(error) {console.error('봇 로그인 실패. 토큰·네트워크 설정을 확인해 주세요.',error.code??error.name);await stop();process.exitCode=1;}

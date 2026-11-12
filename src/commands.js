@@ -16,6 +16,11 @@ export const commands=[
       .addUserOption(o=>o.setName('등록자').setDescription('선택한 사람의 캐릭터만 보기')))
     .addSubcommand(s=>charOption(s.setName('수정').setDescription('내가 등록한 캐릭터 정보를 수정해요'))
       .addStringOption(o=>o.setName('이름').setDescription('새 캐릭터명').setMaxLength(30)))
+    .addSubcommand(s=>charOption(s.setName('스펙').setDescription('수집한 스펙과 장비·스킬 변화를 확인해요')))
+    .addSubcommand(s=>charOption(s.setName('스펙갱신').setDescription('내 캐릭터의 월드·직업·스펙을 넥슨 API로 갱신해요')))
+    .addSubcommand(s=>charOption(s.setName('환산기록').setDescription('직접 확인한 환산 수치를 날짜별로 기록해요'))
+      .addNumberOption(o=>o.setName('수치').setDescription('만 단위가 아닌 표시된 수치 그대로, 예: 65000').setRequired(true).setMinValue(0.01).setMaxValue(1000000000))
+      .addStringOption(o=>o.setName('종류').setDescription('환산 종류').setRequired(true).addChoices({name:'환산 주스탯',value:'주스탯'},{name:'헥사 환산',value:'헥사'})))
     .addSubcommand(s=>charOption(s.setName('해제').setDescription('내 캐릭터 등록을 해제해요. 편성 중이면 먼저 제외해 주세요.'))),
   root('파티','등록된 캐릭터로 파티를 만들고 보스를 정해요')
     .addSubcommand(s=>s.setName('생성').setDescription('현재 스레드에 새 파티를 만들어요')

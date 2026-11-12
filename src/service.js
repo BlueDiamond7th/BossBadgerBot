@@ -42,6 +42,7 @@ export class PartyService {
       requireRule(c.ownerId===ctx.userId,'본인이 등록한 캐릭터만 수정할 수 있어요.','FORBIDDEN');
       const next={...c,name:text(input.name??c.name,'캐릭터명',30),world:optionalText(input.world??c.world,'월드'),job:optionalText(input.job??c.job,'직업')};
       requireRule(!s.characters.some(x=>x.active&&x.id!==id&&sameIdentity(x,next.name,next.world)),'해당 이름의 캐릭터가 이미 등록되어 있어요. 월드 미확인 캐릭터는 이름으로 중복을 확인해요.','DUPLICATE');
+      requireRule(!c.apiLinked||next.name===c.name,'API 연결된 캐릭터의 이름은 스펙 갱신으로 자동 반영돼요. 다른 캐릭터라면 새로 등록해 주세요.','LINKED_CHARACTER');
       // An identity/world change must not silently change existing party composition.
       if(next.name!==c.name||next.world!==c.world) requireRule(!s.parties.some(p=>!p.archived&&p.characterIds.includes(id)),'편성 중인 캐릭터의 이름·월드는 파티에서 제외한 뒤 수정해 주세요.','IN_USE');
       Object.assign(c,next); return c;
@@ -110,7 +111,9 @@ export class PartyService {
   }
   getParty(ctx,id,includeArchived=false) {return party(this.snapshot(ctx),id,includeArchived);}
   warnings(state,p) {
+    const partyCharacters=p.characterIds.map(id=>state.characters.find(c=>c.id===id));
     const notices=p.characterIds.some(id=>!state.characters.find(c=>c.id===id)?.world)?['월드 미확인 캐릭터가 있어요. API 연결 후 같은 월드인지 확인해 주세요.']:[];
+    if(worlds(partyCharacters).size>1) notices.push('API 확인 결과 서로 다른 월드의 캐릭터가 있어요. 파티 구성을 수정해 주세요.');
     return notices.concat(state.parties.filter(other=>!other.archived&&other.id!==p.id&&other.characterIds.some(id=>p.characterIds.includes(id))&&other.bosses.some(b=>p.bosses.some(x=>x.bossId===b.bossId))).map(other=>`${other.name}: 같은 캐릭터의 보스가 겹쳐요. 보상 주기를 확인해 주세요.`));
   }
 }

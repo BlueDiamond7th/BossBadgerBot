@@ -4,7 +4,19 @@ import { requireRule } from './errors.js';
 import { bossById } from './catalog.js';
 import * as view from './views.js';
 
-export function createHandler({service,guildId,verifyContext=contextFor,resolveOwners=eligibleOwners,refreshBoard=async()=>{}}) {
+export function createHandler({service,guildId,tracker=null,verifyContext=contextFor,resolveOwners=eligibleOwners,refreshBoard=async()=>{}}) {
+  function specs(ctx,id,index=0,page=0) {
+    requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요. 봇을 업데이트해 주세요.');
+    return view.specDetail(tracker.character(ctx,id),tracker.history(ctx,id),tracker.manualHistory(ctx,id),ctx,index,page);
+  }
+  async function register(ctx,input,rid) {
+    const c=service.register(ctx,input,rid);
+    let notice=null;
+    if(tracker?.api.apiKey) {
+      try {await tracker.sync(ctx,c.id);} catch {notice='이름 등록은 완료했지만 API 조회는 실패했어요. /캐릭터 스펙갱신으로 다시 시도해 주세요.';}
+    }
+    return {...view.roster(service.snapshot(ctx),0,ctx.userId),...(notice?{content:notice}:{})};
+  }
   async function respond(i,payload) { return i.editReply({content:null,embeds:[],components:[],allowedMentions:{parse:[]},...payload}); }
   async function getEligible(ctx,i,ids) {ctx.eligibleOwnerIds=await resolveOwners(i.channel,ids);return ctx;}
   async function detail(ctx,i,id) {
@@ -38,7 +50,7 @@ export function createHandler({service,guildId,verifyContext=contextFor,resolveO
       if(focused.name==='파티') items=s.parties.filter(p=>sub==='복원'?p.archived:sub==='복사'?true:!p.archived).map(p=>({name:p.name,value:p.id}));
       if(focused.name==='캐릭터') {
         let chars=s.characters.filter(c=>c.active);
-        if(i.commandName==='캐릭터') chars=chars.filter(c=>c.ownerId===ctx.userId);
+        if(i.commandName==='캐릭터'&&sub!=='스펙') chars=chars.filter(c=>c.ownerId===ctx.userId);
         if(i.commandName==='파티'&&sub==='캐릭터제외') {
           const id=i.options.getString('파티'),p=s.parties.find(p=>p.id===id&&!p.archived);
           chars=p?chars.filter(c=>p.characterIds.includes(c.id)):[];
@@ -69,13 +81,16 @@ export function createHandler({service,guildId,verifyContext=contextFor,resolveO
           if(sub==='시작') {service.start(ctx,rid);changed=true;}
           payload=view.board(service.snapshot(ctx));
         } else if(i.commandName==='캐릭터') {
-          if(sub==='등록') {service.register(ctx,{name:get('이름')},rid);changed=true;payload=view.roster(service.snapshot(ctx),0,ctx.userId);}
+          if(sub==='등록') {payload=await register(ctx,{name:get('이름')},rid);changed=true;}
           if(sub==='목록') {
             const owner=i.options.getUser('등록자')?.id??'all',s=service.snapshot(ctx);
             const shown=view.paginate(s.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner)),0,10).items;
             await getEligible(ctx,i,shown.map(c=>c.ownerId));payload=view.roster(s,0,owner,ctx.eligibleOwnerIds);
           }
           if(sub==='수정') {service.editCharacter(ctx,get('캐릭터'),{name:get('이름')??undefined},rid);changed=true;payload=view.roster(service.snapshot(ctx),0,ctx.userId);}
+          if(sub==='스펙') payload=specs(ctx,get('캐릭터'));
+          if(sub==='스펙갱신') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');const result=await tracker.sync(ctx,get('캐릭터'));changed=!result.cached;payload=specs(ctx,get('캐릭터'));if(result.cached)payload.content='10분 이내 수집한 기록을 보여드려요.';}
+          if(sub==='환산기록') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');tracker.recordManual(ctx,get('캐릭터'),i.options.getNumber('수치'),get('종류'),rid);payload=specs(ctx,get('캐릭터'));}
           if(sub==='해제') {service.unregister(ctx,get('캐릭터'),rid);changed=true;payload={content:'내 캐릭터의 보스방 등록을 해제했어요. 과거 보관 데이터는 유지돼요.'};}
         } else if(i.commandName==='파티') {
           let p;
@@ -92,11 +107,14 @@ export function createHandler({service,guildId,verifyContext=contextFor,resolveO
           if(p) payload=await detail(ctx,i,p.id);
         }
       } else if(i.isModalSubmit()) {
-        if(i.customId==='mp:modal:register') {service.register(ctx,{name:i.fields.getTextInputValue('name')},rid);changed=true;payload=view.roster(service.snapshot(ctx),0,ctx.userId);}
+        if(i.customId==='mp:modal:register') {payload=await register(ctx,{name:i.fields.getTextInputValue('name')},rid);changed=true;}
         if(i.customId==='mp:modal:create') {const p=service.createParty(ctx,i.fields.getTextInputValue('name'),rid);changed=true;payload=await detail(ctx,i,p.id);}
       } else {
         const [prefix,action,id,a,b]=i.customId.split(':');requireRule(prefix==='mp','지원하지 않는 동작이에요.');
         const selected=i.values?.[0];
+        if(action==='specpicker') payload=view.specPicker(service.snapshot(ctx),Number(id));
+        if(action==='selectspec'||action==='spec') payload=specs(ctx,selected??id,Number(a)||0,Number(b)||0);
+        if(action==='specsync') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');const result=await tracker.sync(ctx,id);changed=!result.cached;payload=specs(ctx,id);if(result.cached)payload.content='10분 이내 수집한 기록을 보여드려요.';}
         if(action==='board') {payload=view.board(service.snapshot(ctx));changed=true;}
         if(action==='roster') {
           const s=service.snapshot(ctx),page=Number(a),shown=view.paginate(s.characters.filter(c=>c.active&&(id==='all'||c.ownerId===id)),page,10).items;

@@ -1,4 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown } from 'discord.js';
+import { specChanges } from './specs.js';
 import { BOSSES, bossById } from './catalog.js';
 
 export const safe=value=>escapeMarkdown(String(value)).replace(/@/g,'＠');
@@ -23,7 +24,7 @@ export function board(state) {
 export function roster(state,page=0,owner='all',eligibleOwnerIds=null) {
   const chars=state.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner));const view=paginate(chars,page,10);
   const lines=view.items.map(c=>`**${safe(c.name)}** · ${safe(c.world??'월드 미확인')} / ${safe(c.job??'직업 미확인')}\n등록자 <@${c.ownerId}>${eligibleOwnerIds&&!eligibleOwnerIds.has(c.ownerId)?' · ⚠️ 현재 참가자 아님':''}`);
-  return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(lines.join('\n\n')||'등록된 캐릭터가 없어요. 각자 내 캐릭터 등록을 눌러 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개 · 닉네임 등록은 소유 인증 전 상태예요.`})],components:[pager(`mp:roster:${owner}`,view.page,view.pages),row(button('mp:register','내 캐릭터 등록',ButtonStyle.Primary)),home()],allowedMentions:{parse:[]}};
+  return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(lines.join('\n\n')||'등록된 캐릭터가 없어요. 각자 내 캐릭터 등록을 눌러 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개 · 닉네임 등록은 소유 인증 전 상태예요.`})],components:[pager(`mp:roster:${owner}`,view.page,view.pages),row(button('mp:register','내 캐릭터 등록',ButtonStyle.Primary),button('mp:specpicker:0','스펙 변화')),home()],allowedMentions:{parse:[]}};
 }
 export function partyList(state,page=0,archived=false) {
   const view=paginate(state.parties.filter(p=>p.archived===archived),page);
@@ -81,4 +82,33 @@ export function archiveConfirmation(p) {
 // A shared card is readable by everyone; editing opens a permission-checked personal panel.
 export function publicParty(payload,id) {
   return {...payload,components:[row(button(`mp:detail:${id}`,'열기 · 관리'))]};
+}
+
+export function specPicker(state,page=0) {
+  const list=paginate(state.characters.filter(c=>c.active),page,25),components=[];
+  if(list.items.length) components.push(row(new StringSelectMenuBuilder().setCustomId('mp:selectspec').setPlaceholder('스펙을 볼 캐릭터').addOptions(list.items.map(c=>({label:truncate(c.name),value:c.id})))));
+  components.push(pager('mp:specpicker',list.page,list.pages),home());
+  return {content:'장비·스킬·전투력·레벨 변화를 볼 캐릭터를 선택하세요.',embeds:[],components};
+}
+const stamp=time=>new Date(time).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',hour12:false});
+export function specDetail(character,history,manual,ctx,index=0,page=0) {
+  const pos=paginate(history,index,1),current=pos.items[0],previous=history[pos.page+1];
+  const changes=current?specChanges(previous,current):['아직 수집한 스펙이 없어요. 스펙 갱신을 누르거나 자동 수집을 기다려 주세요.'];
+  const list=paginate(changes,page,8);
+  const emb=base().setTitle(`${safe(character.name)} · 스펙 변화`).setDescription(current?`${stamp(current.collectedAt)} 수집 (한국 시간)\n레벨 **${current.level}** · 전투력 **${BigInt(current.combatPower).toLocaleString('ko-KR')}**\n${previous?`${stamp(previous.collectedAt)} 기록과 비교`:'첫 수집 기록'}\n장비 세팅·버프·프리셋에 따라 수치가 달라질 수 있어요.`:'넥슨 API 연결 후 자동으로 기록해요.');
+  emb.addFields({name:`변화 ${list.page+1}/${list.pages} · ${changes.length}개`,value:list.items.map(line=>safe(line).slice(0,115)).join('\n').slice(0,1024)});
+  if(current?.unavailable?.length) emb.addFields({name:'미제공 항목',value:`${safe(current.unavailable.join(', '))} — 이 항목의 변화는 비교하지 않아요.`});
+  const manualLines=[];
+  for(const metric of ['주스탯','헥사']) {
+    const entries=manual.filter(x=>x.metric===metric);
+    if(entries.length) manualLines.push(...entries.slice(0,3).map((x,index)=>`${stamp(x.recorded_at)} · ${metric} ${x.value.toLocaleString('ko-KR')}${entries[index+1]?` (${x.value-entries[index+1].value>=0?'+':''}${(x.value-entries[index+1].value).toLocaleString('ko-KR')})`:''}`));
+  }
+  emb.addFields({name:'환산 최근 기록 · 사용자 입력 (자동 수집 아님)',value:manualLines.join('\n')||'/캐릭터 환산기록으로 직접 확인한 수치를 기록할 수 있어요.'});
+  emb.setFooter({text:'Data based on NEXON Open API · API 기록 최근 29일 · 환산은 수동 기록'});
+  const components=[row(button(`mp:spec:${character.id}:${pos.page-1}:0`,'더 최근 기록',ButtonStyle.Secondary,pos.page===0),button(`mp:spec:${character.id}:${pos.page+1}:0`,'이전 기록',ButtonStyle.Secondary,pos.page>=pos.pages-1)),
+    row(button(`mp:spec:${character.id}:${pos.page}:${list.page-1}`,'이전 변화',ButtonStyle.Secondary,list.page===0),button(`mp:spec:${character.id}:${pos.page}:${list.page+1}`,'다음 변화',ButtonStyle.Secondary,list.page>=list.pages-1))];
+  const links=[new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('환산 사이트 열기').setURL(`https://maplescouter.com/ko/info?name=${encodeURIComponent(character.name)}`)];
+  if(character.ownerId===ctx.userId) links.unshift(button(`mp:specsync:${character.id}`,'스펙 갱신',ButtonStyle.Primary));
+  components.push(row(...links),home());
+  return {embeds:[emb],components,allowedMentions:{parse:[]}};
 }
