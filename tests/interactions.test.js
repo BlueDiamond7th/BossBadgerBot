@@ -129,3 +129,15 @@ test('private navigation replaces the panel without follow-up messages',async t=
   await handler(i);assert.equal(updated,1);
   assert.ok(i.outputs[0].components.some(r=>r.toJSON().components.some(c=>c.custom_id==='mp:parties:active:0')));
 });
+
+test('restore confirmation refreshes owner eligibility before changing stored state',async t=>{
+  const {service}=setup(t);service.start(context,'start');
+  const c=service.register({...context,userId:'u2'},{name:'친구',world:'루나',job:'비숍'},'character');
+  const p=service.createParty(context,'A','party');service.addCharacter(context,p.id,c.id,'add');
+  const archived=service.archive(context,p.id,true,'archive');let eligible=false;
+  const handler=createHandler({service,guildId:'g',verifyContext:async()=>({...context}),resolveOwners:async(channel,ids)=>{assert.deepEqual(ids,['u2']);return new Set(eligible?['u2']:[]);}});
+  const button=()=>fake('button',{customId:`mp:confirmarchive:${p.id}:${archived.version}:restore`});
+  const denied=button();await handler(denied);
+  assert.match(denied.outputs[0].content,/참가/);assert.deepEqual(service.getParty(context,p.id,true),archived);
+  eligible=true;await handler(button());assert.equal(service.getParty(context,p.id).archived,false);
+});

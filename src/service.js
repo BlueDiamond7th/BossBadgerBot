@@ -96,7 +96,12 @@ export class PartyService {
   archive(ctx,id,archived,rid,version) {
     return this.repo.mutate(ctx,rid,'party.archive',s=>{
       const p=party(s,id,true);editable(ctx,p,version);
-      if(!archived) requireRule(p.characterIds.every(id=>s.characters.find(c=>c.id===id)?.active),'등록 해제된 캐릭터가 포함돼 있어요. 구성 복사로 사용 가능한 캐릭터만 옮겨 새 파티를 만들어 주세요.','INACTIVE_CHARACTER');
+      if(!archived) {
+        const characters=p.characterIds.map(id=>s.characters.find(c=>c.id===id));
+        requireRule(characters.every(c=>c?.active),'등록 해제된 캐릭터가 포함돼 있어요. 구성 복사로 사용 가능한 캐릭터만 옮겨 새 파티를 만들어 주세요.','INACTIVE_CHARACTER');
+        requireRule(characters.every(c=>ctx.eligibleOwnerIds instanceof Set&&ctx.eligibleOwnerIds.has(c.ownerId)),'현재 채널/스레드에 참가할 수 없는 등록자가 포함돼 있어요. 참가 자격을 확인하거나 구성 복사로 새 파티를 만들어 주세요.','NOT_MEMBER');
+        requireRule(new Set(characters.map(c=>c.world)).size<=1,'캐릭터의 월드가 달라졌어요. 같은 월드로 수정한 뒤 복원해 주세요.','MIXED_WORLD');
+      }
       p.archived=archived;p.version++;return p;
     });
   }

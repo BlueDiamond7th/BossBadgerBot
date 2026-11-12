@@ -118,3 +118,25 @@ test('backup script captures the live WAL-backed database and refuses overwrite'
   assert.equal(new PartyService(copy).getParty(ctx(),p.id).name,'백업할 파티');
   const again=spawnSync(process.execPath,['scripts/backup.js',target],{env:{...process.env,DATABASE_PATH:source},encoding:'utf8'});assert.equal(again.status,1);
 });
+
+test('restoration rejects changed worlds atomically and permits retry after correction',t=>{
+  const {s,rid}=fixture(t),a=add(s,rid),b=add(s,rid,'u2','친구'),p=s.createParty(ctx(),'A',rid());
+  s.addCharacter(ctx(),p.id,a.id,rid());s.addCharacter(ctx(),p.id,b.id,rid());
+  const archived=s.archive(ctx(),p.id,true,rid());
+  s.editCharacter(ctx('u2'),b.id,{world:'스카니아'},rid());
+  assert.throws(()=>s.archive(ctx(),p.id,false,'restore',archived.version),{code:'MIXED_WORLD'});
+  assert.deepEqual(s.getParty(ctx(),p.id,true),archived);
+  s.editCharacter(ctx('u2'),b.id,{world:'루나'},rid());
+  assert.equal(s.archive(ctx(),p.id,false,'restore',archived.version).archived,false);
+});
+test('restoration requires verified current owners but archiving does not',t=>{
+  const {s,rid}=fixture(t),c=add(s,rid,'u2','친구'),p=s.createParty(ctx(),'A',rid());
+  s.addCharacter(ctx(),p.id,c.id,rid());
+  const absent={...ctx(),eligibleOwnerIds:new Set(['u1'])};
+  const archived=s.archive(absent,p.id,true,rid());
+  for(const eligibleOwnerIds of [undefined,new Set(['u1'])]) {
+    assert.throws(()=>s.archive({...ctx(),eligibleOwnerIds},p.id,false,rid()),{code:'NOT_MEMBER'});
+    assert.deepEqual(s.getParty(ctx(),p.id,true),archived);
+  }
+  assert.equal(s.archive(ctx(),p.id,false,rid()).archived,false);
+});

@@ -12,7 +12,7 @@ export function createHandler({service,guildId,verifyContext=contextFor,resolveO
     await getEligible(ctx,i,p.characterIds.map(cid=>s.characters.find(c=>c.id===cid)?.ownerId).filter(Boolean));
     return view.partyDetail(s,p,ctx,service.warnings(s,p));
   }
-  async function withCopyOwners(ctx,i,id) {
+  async function withPartyOwners(ctx,i,id) {
     const s=service.snapshot(ctx),p=service.getParty(ctx,id,true);
     return getEligible(ctx,i,p.characterIds.map(cid=>s.characters.find(c=>c.id===cid)?.ownerId).filter(Boolean));
   }
@@ -75,7 +75,7 @@ export function createHandler({service,guildId,verifyContext=contextFor,resolveO
           if(sub==='캐릭터제외') {p=service.removeCharacter(ctx,pid,get('캐릭터'),rid);changed=true;}
           if(sub==='보스추가') {p=service.addBoss(ctx,pid,get('보스'),get('난이도'),rid);changed=true;}
           if(sub==='보스제외') {p=service.removeBoss(ctx,pid,get('보스'),rid);changed=true;}
-          if(sub==='복사') {await withCopyOwners(ctx,i,pid);p=service.copyParty(ctx,pid,get('이름'),rid);changed=true;}
+          if(sub==='복사') {await withPartyOwners(ctx,i,pid);p=service.copyParty(ctx,pid,get('이름'),rid);changed=true;}
           if(sub==='이름변경') {p=service.renameParty(ctx,pid,get('이름'),rid);changed=true;}
           if(sub==='보관'||sub==='복원') {const existing=service.getParty(ctx,pid,true);requireEditable(ctx,existing);requireRule(sub==='복원'?existing.archived:!existing.archived,sub==='복원'?'이미 활성 상태인 파티예요.':'이미 보관한 파티예요.');payload=view.archiveConfirmation(existing);}
           if(p) payload=await detail(ctx,i,p.id);
@@ -104,9 +104,13 @@ export function createHandler({service,guildId,verifyContext=contextFor,resolveO
         if(action==='selectboss') {const p=requireEditable(ctx,service.getParty(ctx,id),Number(a));requireRule(bossById(selected),'보스를 다시 선택해 주세요.');payload=view.difficultyPicker(p,selected);}
         if(action==='difficulty') {service.addBoss(ctx,id,b,selected,rid,Number(a));changed=true;payload=await detail(ctx,i,id);}
         if(action==='removeboss') {service.removeBoss(ctx,id,selected,rid,Number(a));changed=true;payload=await detail(ctx,i,id);}
-        if(action==='copy') {await withCopyOwners(ctx,i,id);const p=service.copyParty(ctx,id,null,rid);changed=true;payload=await detail(ctx,i,p.id);}
+        if(action==='copy') {await withPartyOwners(ctx,i,id);const p=service.copyParty(ctx,id,null,rid);changed=true;payload=await detail(ctx,i,p.id);}
         if(action==='archive') {const p=requireEditable(ctx,service.getParty(ctx,id,true),Number(a));payload=view.archiveConfirmation(p);}
-        if(action==='confirmarchive') {service.archive(ctx,id,b==='store',rid,Number(a));changed=true;payload=await detail(ctx,i,id);}
+        if(action==='confirmarchive') {
+          requireEditable(ctx,service.getParty(ctx,id,true),Number(a));
+          if(b==='restore') await withPartyOwners(ctx,i,id);
+          service.archive(ctx,id,b==='store',rid,Number(a));changed=true;payload=await detail(ctx,i,id);
+        }
       }
       requireRule(payload,'지원하지 않는 동작이에요. 명령어를 다시 열어 주세요.');
       const shared=i.isChatInputCommand()&&((i.commandName==='파티'&&['목록','정보'].includes(i.options.getSubcommand()))||(i.commandName==='캐릭터'&&i.options.getSubcommand()==='목록'));
