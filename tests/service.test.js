@@ -140,3 +140,15 @@ test('restoration requires verified current owners but archiving does not',t=>{
   }
   assert.equal(s.archive(ctx(),p.id,false,rid()).archived,false);
 });
+
+test('name-only registration supports edits and unknown-world party operations',t=>{
+  const {s,rid}=fixture(t),a=s.register(ctx(),{name:'이름만'},rid()),b=add(s,rid,'u2','기존캐릭터');
+  assert.equal(a.world,null);assert.equal(a.job,null);
+  assert.throws(()=>s.register(ctx('u2'),{name:'이름만'},rid()),{code:'DUPLICATE'});
+  assert.throws(()=>s.register(ctx(),{name:'기존캐릭터'},rid()),{code:'DUPLICATE'});
+  s.editCharacter(ctx(),a.id,{name:'새이름'},rid());
+  const p=s.createParty(ctx(),'A',rid());s.addCharacter(ctx(),p.id,b.id,rid());s.addCharacter(ctx(),p.id,a.id,rid());
+  assert.match(s.warnings(s.snapshot(ctx()),s.getParty(ctx(),p.id))[0],/월드 미확인/);
+  assert.equal(s.copyParty(ctx(),p.id,'B',rid()).characterIds.length,2);
+  s.archive(ctx(),p.id,true,rid());assert.equal(s.archive(ctx(),p.id,false,rid()).archived,false);
+});

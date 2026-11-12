@@ -11,15 +11,11 @@ export const commands=[
     .addSubcommand(s=>s.setName('현황').setDescription('현재 스레드의 등록 현황과 관리 버튼을 열어요')),
   root('캐릭터','내 캐릭터를 원하는 만큼 등록하고 관리해요')
     .addSubcommand(s=>s.setName('등록').setDescription('이 스레드에서 사용할 내 캐릭터를 등록해요')
-      .addStringOption(o=>o.setName('이름').setDescription('캐릭터 닉네임').setMaxLength(30).setRequired(true))
-      .addStringOption(o=>o.setName('월드').setDescription('예: 루나').setMaxLength(30).setRequired(true))
-      .addStringOption(o=>o.setName('직업').setDescription('예: 히어로').setMaxLength(30).setRequired(true)))
+      .addStringOption(o=>o.setName('이름').setDescription('캐릭터 닉네임').setMaxLength(30).setRequired(true)))
     .addSubcommand(s=>s.setName('목록').setDescription('스레드 참가자들이 등록한 캐릭터를 봐요')
       .addUserOption(o=>o.setName('등록자').setDescription('선택한 사람의 캐릭터만 보기')))
     .addSubcommand(s=>charOption(s.setName('수정').setDescription('내가 등록한 캐릭터 정보를 수정해요'))
-      .addStringOption(o=>o.setName('이름').setDescription('새 캐릭터명').setMaxLength(30))
-      .addStringOption(o=>o.setName('월드').setDescription('새 월드').setMaxLength(30))
-      .addStringOption(o=>o.setName('직업').setDescription('새 직업').setMaxLength(30)))
+      .addStringOption(o=>o.setName('이름').setDescription('새 캐릭터명').setMaxLength(30)))
     .addSubcommand(s=>charOption(s.setName('해제').setDescription('내 캐릭터 등록을 해제해요. 편성 중이면 먼저 제외해 주세요.'))),
   root('파티','등록된 캐릭터로 파티를 만들고 보스를 정해요')
     .addSubcommand(s=>s.setName('생성').setDescription('현재 스레드에 새 파티를 만들어요')

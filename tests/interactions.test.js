@@ -167,3 +167,13 @@ test('autocomplete accounts for time already spent before handling',async t=>{
   const i=fake('autocomplete',{createdTimestamp:Date.now()-2500});await handler(i);
   assert.deepEqual(i.outputs,[[]]);assert.equal(verified,false);
 });
+
+test('registration command and modal request only a character name',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  const commandDef=commandJSON().find(c=>c.name==='캐릭터').options.find(c=>c.name==='등록');
+  assert.deepEqual(commandDef.options.map(o=>o.name),['이름']);
+  assert.equal(views.registrationModal().toJSON().components.length,1);
+  const i=fake('modal',{customId:'mp:modal:register',fields:{getTextInputValue:key=>{assert.equal(key,'name');return '이름등록';}}});
+  await handler(i);assert.equal(service.snapshot(context).characters[0].world,null);
+  assert.match(i.outputs[0].embeds[0].toJSON().description,/월드 미확인/);
+});

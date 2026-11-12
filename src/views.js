@@ -22,7 +22,7 @@ export function board(state) {
 }
 export function roster(state,page=0,owner='all',eligibleOwnerIds=null) {
   const chars=state.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner));const view=paginate(chars,page,10);
-  const lines=view.items.map(c=>`**${safe(c.name)}** · ${safe(c.world)} / ${safe(c.job)}\n등록자 <@${c.ownerId}>${eligibleOwnerIds&&!eligibleOwnerIds.has(c.ownerId)?' · ⚠️ 현재 참가자 아님':''}`);
+  const lines=view.items.map(c=>`**${safe(c.name)}** · ${safe(c.world??'월드 미확인')} / ${safe(c.job??'직업 미확인')}\n등록자 <@${c.ownerId}>${eligibleOwnerIds&&!eligibleOwnerIds.has(c.ownerId)?' · ⚠️ 현재 참가자 아님':''}`);
   return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(lines.join('\n\n')||'등록된 캐릭터가 없어요. 각자 내 캐릭터 등록을 눌러 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개 · 닉네임 등록은 소유 인증 전 상태예요.`})],components:[pager(`mp:roster:${owner}`,view.page,view.pages),row(button('mp:register','내 캐릭터 등록',ButtonStyle.Primary)),home()],allowedMentions:{parse:[]}};
 }
 export function partyList(state,page=0,archived=false) {
@@ -38,7 +38,7 @@ export function partyDetail(state,p,ctx,warnings=[]) {
   const chars=p.characterIds.map(id=>state.characters.find(c=>c.id===id)).filter(Boolean);
   const canEdit=ctx.isManager||p.creatorId===ctx.userId;
   const emb=base().setTitle(`${p.archived?'📦':'⚔️'} ${safe(p.name)}`).setDescription(`만든 사람 <@${p.creatorId}> · ${chars.length}명${p.archived?' · 보관됨':''}`).addFields(
-    {name:'파티 캐릭터',value:chars.slice(0,12).map(c=>`• **${safe(c.name)}** · ${safe(c.job)} · <@${c.ownerId}>${ctx.eligibleOwnerIds&&!ctx.eligibleOwnerIds.has(c.ownerId)?' ⚠️ 현재 참가자 아님':''}`).join('\n').slice(0,1000)||'아직 비어 있어요. 아래에서 캐릭터를 추가하세요.'},
+    {name:'파티 캐릭터',value:chars.slice(0,12).map(c=>`• **${safe(c.name)}** · ${safe(c.job??'직업 미확인')} · <@${c.ownerId}>${ctx.eligibleOwnerIds&&!ctx.eligibleOwnerIds.has(c.ownerId)?' ⚠️ 현재 참가자 아님':''}`).join('\n').slice(0,1000)||'아직 비어 있어요. 아래에서 캐릭터를 추가하세요.'},
     {name:'등록 보스',value:p.bosses.map((b,i)=>`${i+1}. ${safe(b.difficulty)} ${safe(bossById(b.bossId)?.name??b.bossId)}`).join('\n')||'보스가 아직 등록되지 않았어요.'}
   ).setFooter({text:`구성 버전 ${p.version} · 캐릭터·보스 변경은 이 파티에만 반영돼요.`});
   if(chars.length>12) emb.addFields({name:'전체 구성원',value:`총 ${chars.length}명 중 12명을 표시했어요. 캐릭터 목록이나 제외 메뉴에서 나머지를 확인하세요.`});
@@ -55,7 +55,7 @@ export function memberPicker(state,p,page=0,remove=false,eligibleOwnerIds=null) 
   const ownerIds=new Set(p.characterIds.map(id=>state.characters.find(c=>c.id===id)?.ownerId));
   const chars=state.characters.filter(c=>remove?p.characterIds.includes(c.id):c.active&&!ownerIds.has(c.ownerId)&&(!eligibleOwnerIds||eligibleOwnerIds.has(c.ownerId)));
   const view=paginate(chars,page,20);const action=remove?'delmember':'addmember';const components=[];
-  if(view.items.length) components.push(row(new StringSelectMenuBuilder().setCustomId(`mp:${remove?'removemember':'selectmember'}:${p.id}:${p.version}`).setPlaceholder(remove?'제외할 캐릭터':'추가할 캐릭터').addOptions(view.items.map(c=>({label:truncate(`${c.name} · ${c.world}`),value:c.id,description:truncate(`${c.job} · 등록자 ID ${c.ownerId}`)})))));
+  if(view.items.length) components.push(row(new StringSelectMenuBuilder().setCustomId(`mp:${remove?'removemember':'selectmember'}:${p.id}:${p.version}`).setPlaceholder(remove?'제외할 캐릭터':'추가할 캐릭터').addOptions(view.items.map(c=>({label:truncate(`${c.name} · ${c.world??'월드 미확인'}`),value:c.id,description:truncate(`${c.job??'직업 미확인'} · 등록자 ID ${c.ownerId}`)})))));
   components.push(row(button(`mp:${action}:${p.id}:${view.page-1}:${p.version}`,'이전',ButtonStyle.Secondary,view.page===0),button(`mp:${action}:${p.id}:${view.page+1}:${p.version}`,'다음',ButtonStyle.Secondary,view.page>=view.pages-1),button(`mp:detail:${p.id}`,'파티로 돌아가기')));
   return {embeds:[base().setTitle(`${safe(p.name)} · 캐릭터 ${remove?'제외':'추가'}`).setDescription(view.items.length?'등록된 목록에서 선택하세요. 한 사람당 한 캐릭터씩 편성해요.':remove?'편성된 캐릭터가 없어요.':'추가할 캐릭터가 없어요. 다른 참가자의 캐릭터 등록을 기다리거나 현재 편성한 캐릭터를 먼저 제외해 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 선택 가능 ${view.total}개`})],components,allowedMentions:{parse:[]}};
 }
@@ -71,7 +71,7 @@ export function difficultyPicker(p,bossId) {
   return {content:`**${safe(b.name)}**의 난이도를 선택하세요.`,embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:difficulty:${p.id}:${p.version}:${b.id}`).setPlaceholder('난이도').addOptions(b.difficulties.map(d=>({label:d,value:d})))),row(button(`mp:detail:${p.id}`,'파티로 돌아가기'))],allowedMentions:{parse:[]}};
 }
 export function registrationModal() {
-  return new ModalBuilder().setCustomId('mp:modal:register').setTitle('내 캐릭터 등록').addComponents(...[['name','캐릭터명','도토리검사'],['world','월드','루나'],['job','직업','히어로']].map(([id,label,placeholder])=>row(new TextInputBuilder().setCustomId(id).setLabel(label).setPlaceholder(placeholder).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(30))));
+  return new ModalBuilder().setCustomId('mp:modal:register').setTitle('내 캐릭터 등록').addComponents(...[['name','캐릭터명','도토리검사']].map(([id,label,placeholder])=>row(new TextInputBuilder().setCustomId(id).setLabel(label).setPlaceholder(placeholder).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(30))));
 }
 export function creationModal() {return new ModalBuilder().setCustomId('mp:modal:create').setTitle('새 파티 만들기').addComponents(row(new TextInputBuilder().setCustomId('name').setLabel('파티 이름').setPlaceholder('목요일 본캐팟').setMaxLength(60).setStyle(TextInputStyle.Short).setRequired(true)));}
 export function archiveConfirmation(p) {

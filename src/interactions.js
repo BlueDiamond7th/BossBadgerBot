@@ -43,7 +43,7 @@ export function createHandler({service,guildId,verifyContext=contextFor,resolveO
           const id=i.options.getString('파티'),p=s.parties.find(p=>p.id===id&&!p.archived);
           chars=p?chars.filter(c=>p.characterIds.includes(c.id)):[];
         }
-        items=chars.map(c=>({name:`${c.name} · ${c.world} · ${c.job}`,value:c.id}));
+        items=chars.map(c=>({name:`${c.name} · ${c.world??'월드 미확인'} · ${c.job??'직업 미확인'}`,value:c.id}));
       }
       await i.respond(items.filter(item=>item.name.toLocaleLowerCase().includes(query)).slice(0,25).map(item=>({...item,name:item.name.slice(0,100)})));
     } catch { if(!i.responded) await i.respond([]).catch(()=>{}); }
@@ -69,13 +69,13 @@ export function createHandler({service,guildId,verifyContext=contextFor,resolveO
           if(sub==='시작') {service.start(ctx,rid);changed=true;}
           payload=view.board(service.snapshot(ctx));
         } else if(i.commandName==='캐릭터') {
-          if(sub==='등록') {service.register(ctx,{name:get('이름'),world:get('월드'),job:get('직업')},rid);changed=true;payload=view.roster(service.snapshot(ctx),0,ctx.userId);}
+          if(sub==='등록') {service.register(ctx,{name:get('이름')},rid);changed=true;payload=view.roster(service.snapshot(ctx),0,ctx.userId);}
           if(sub==='목록') {
             const owner=i.options.getUser('등록자')?.id??'all',s=service.snapshot(ctx);
             const shown=view.paginate(s.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner)),0,10).items;
             await getEligible(ctx,i,shown.map(c=>c.ownerId));payload=view.roster(s,0,owner,ctx.eligibleOwnerIds);
           }
-          if(sub==='수정') {service.editCharacter(ctx,get('캐릭터'),{name:get('이름')??undefined,world:get('월드')??undefined,job:get('직업')??undefined},rid);changed=true;payload=view.roster(service.snapshot(ctx),0,ctx.userId);}
+          if(sub==='수정') {service.editCharacter(ctx,get('캐릭터'),{name:get('이름')??undefined},rid);changed=true;payload=view.roster(service.snapshot(ctx),0,ctx.userId);}
           if(sub==='해제') {service.unregister(ctx,get('캐릭터'),rid);changed=true;payload={content:'내 캐릭터의 보스방 등록을 해제했어요. 과거 보관 데이터는 유지돼요.'};}
         } else if(i.commandName==='파티') {
           let p;
@@ -92,7 +92,7 @@ export function createHandler({service,guildId,verifyContext=contextFor,resolveO
           if(p) payload=await detail(ctx,i,p.id);
         }
       } else if(i.isModalSubmit()) {
-        if(i.customId==='mp:modal:register') {service.register(ctx,{name:i.fields.getTextInputValue('name'),world:i.fields.getTextInputValue('world'),job:i.fields.getTextInputValue('job')},rid);changed=true;payload=view.roster(service.snapshot(ctx),0,ctx.userId);}
+        if(i.customId==='mp:modal:register') {service.register(ctx,{name:i.fields.getTextInputValue('name')},rid);changed=true;payload=view.roster(service.snapshot(ctx),0,ctx.userId);}
         if(i.customId==='mp:modal:create') {const p=service.createParty(ctx,i.fields.getTextInputValue('name'),rid);changed=true;payload=await detail(ctx,i,p.id);}
       } else {
         const [prefix,action,id,a,b]=i.customId.split(':');requireRule(prefix==='mp','지원하지 않는 동작이에요.');
