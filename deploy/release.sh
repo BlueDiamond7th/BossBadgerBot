@@ -18,13 +18,18 @@ previous=$(readlink -f "$root/current" 2>/dev/null || true)
 if [[ -n "$previous" && -d "$previous" ]]; then
   (cd "$previous"; RELEASE_ID=$(basename "$previous") docker compose -p maple-bot exec -T bot node scripts/backup.js)
 fi
-if docker compose -p maple-bot up -d --wait --wait-timeout 120; then
+if docker compose -p maple-bot up -d --wait --wait-timeout 120 &&
+  docker compose -p maple-bot exec -T bot node scripts/register.js; then
   ln -sfn "$target" "$root/current"
   echo "Deployment healthy: $release"
 else
   echo 'Deployment failed; restoring previous code (database is not rewound).'
   if [[ -n "$previous" && -d "$previous" ]]; then
-    (cd "$previous"; RELEASE_ID=$(basename "$previous") docker compose -p maple-bot up -d --wait --wait-timeout 120)
+    (cd "$previous"
+      export RELEASE_ID=$(basename "$previous")
+      docker compose -p maple-bot up -d --wait --wait-timeout 120
+      docker compose -p maple-bot exec -T bot node scripts/register.js
+    )
   else
     docker compose -p maple-bot down
   fi

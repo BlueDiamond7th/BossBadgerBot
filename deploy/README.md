@@ -4,7 +4,7 @@
 
 ## 구조
 
-`main` 푸시 → GitHub Actions에서 Node 24 테스트 → SSH 소스 전송 → Linux에서 Docker 빌드 → 실행 중 SQLite 백업 → 컨테이너 교체 → Discord 연결 상태 확인.
+`main` 푸시 → GitHub Actions에서 Node 24 테스트 → SSH 소스 전송 → Linux에서 Docker 빌드 → 실행 중 SQLite 백업 → 컨테이너 교체 → Discord 연결 상태 확인 → Discord 명령어 자동 등록.
 
 현재 JavaScript 프로젝트에는 별도 컴파일이 필요 없습니다. Docker 이미지 생성이 빌드 단계입니다. 서버에서 빌드하므로 서버 CPU 아키텍처에 맞는 이미지가 만들어집니다. PR은 테스트만 수행합니다. main 브랜치에서 수동 실행도 가능합니다. 저장소에는 **maple-discord-bot 폴더의 내용이 루트**에 있어야 합니다. 모노레포라면 작업 경로 수정이 필요합니다.
 
@@ -69,7 +69,7 @@ docker compose -p maple-bot ps
 docker compose -p maple-bot logs --tail=100 bot
 ```
 
-명령어 등록은 Discord 명령어 목록을 변경하므로 매 배포마다 자동 실행하지 않습니다. 첫 설치 및 명령어 정의 변경 시 다음을 실행하세요.
+첫 설치와 이후 모든 배포에서 봇 연결 상태 확인 후 Discord 명령어를 자동 등록합니다. 등록이 실패하면 배포를 실패 처리하고, 이전 버전이 있는 경우 해당 코드로 복구한 뒤 이전 명령어 정의도 다시 등록합니다. 복구 또는 재등록 실패는 Actions 로그에서 확인해야 합니다. 수동으로 명령어만 다시 등록하려면 다음을 실행하세요.
 
 ```sh
 docker compose -p maple-bot exec -T bot node scripts/register.js
