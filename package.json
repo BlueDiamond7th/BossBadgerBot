@@ -1,0 +1,20 @@
+{
+  "name": "maple-thread-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "스레드별 캐릭터 등록, 파티 편성, 보스 관리를 위한 Discord 봇",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/bot.js",
+    "register": "node --env-file-if-exists=.env scripts/register.js",
+    "check": "node scripts/check.js",
+    "test": "node --test tests/*.test.js",
+    "backup": "node --env-file-if-exists=.env scripts/backup.js"
+  },
+  "dependencies": {
+    "discord.js": "14.28.1"
+  }
+}

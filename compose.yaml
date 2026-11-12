@@ -1,0 +1,24 @@
+services:
+  bot:
+    image: maple-bot:${RELEASE_ID:?RELEASE_ID required}
+    build: .
+    restart: unless-stopped
+    init: true
+    env_file: ../../shared/.env
+    environment:
+      DATABASE_PATH: /app/data/bot.sqlite
+      HEALTH_FILE: /tmp/maple-ready
+    volumes:
+      - ../../shared/data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "scripts/healthcheck.js"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
