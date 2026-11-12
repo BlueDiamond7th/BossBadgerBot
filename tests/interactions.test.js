@@ -141,3 +141,29 @@ test('restore confirmation refreshes owner eligibility before changing stored st
   assert.match(denied.outputs[0].content,/참가/);assert.deepEqual(service.getParty(context,p.id,true),archived);
   eligible=true;await handler(button());assert.equal(service.getParty(context,p.id).archived,false);
 });
+test('autocomplete times out closed and ignores late permission results',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  for(const fail of [false,true]) {
+    let resolve,reject,reads=0;
+    const permission=new Promise((yes,no)=>{resolve=yes;reject=no;});
+    const handler=createHandler({guildId:'g',service:{snapshot(){reads++;throw new Error('must not read');}},verifyContext:()=>permission});
+    const i=fake('autocomplete');const pending=handler(i);
+    t.mock.timers.tick(2000);await pending;assert.deepEqual(i.outputs,[[]]);
+    if(fail) reject(new Error('late network failure'));else resolve(context);
+    await Promise.resolve();await Promise.resolve();
+    assert.equal(reads,0);assert.deepEqual(i.outputs,[[]]);
+  }
+});
+test('autocomplete returns authorized matching choices and closes on denied access',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');const p=service.createParty(context,'목요일팟','party');
+  const properties={commandName:'파티',options:{getSubcommand:()=> '정보',getFocused:()=>({name:'파티',value:'목요일'})}};
+  const i=fake('autocomplete',properties);await handler(i);assert.deepEqual(i.outputs,[[{name:p.name,value:p.id}]]);
+  const denied=createHandler({service,guildId:'g',verifyContext:async()=>{throw new Error('denied');}});
+  const j=fake('autocomplete',properties);await denied(j);assert.deepEqual(j.outputs,[[]]);
+});
+test('autocomplete accounts for time already spent before handling',async t=>{
+  let verified=false;
+  const handler=createHandler({guildId:'g',verifyContext:async()=>{verified=true;return context;}});
+  const i=fake('autocomplete',{createdTimestamp:Date.now()-2500});await handler(i);
+  assert.deepEqual(i.outputs,[[]]);assert.equal(verified,false);
+});

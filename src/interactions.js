@@ -22,8 +22,18 @@ export function createHandler({service,guildId,verifyContext=contextFor,resolveO
     return getEligible(ctx,i,[c.ownerId]);
   }
   async function autocomplete(i) {
+    let timer;
     try {
-      const ctx=await verifyContext(i,guildId),s=service.snapshot(ctx),focused=i.options.getFocused(true),query=String(focused.value).toLocaleLowerCase();
+      // Leave time for Discord delivery; slow permission checks must not expose data.
+      const remaining=Math.max(0,2000-(Date.now()-(i.createdTimestamp??Date.now())));
+      if(remaining===0) {await i.respond([]);return;}
+      const ctx=await Promise.race([
+        verifyContext(i,guildId),
+        new Promise(resolve=>{timer=setTimeout(()=>resolve(null),remaining);}),
+      ]);
+      clearTimeout(timer);
+      if(!ctx) {await i.respond([]);return;}
+      const s=service.snapshot(ctx),focused=i.options.getFocused(true),query=String(focused.value).toLocaleLowerCase();
       const sub=i.options.getSubcommand();let items=[];
       if(focused.name==='파티') items=s.parties.filter(p=>sub==='복원'?p.archived:sub==='복사'?true:!p.archived).map(p=>({name:p.name,value:p.id}));
       if(focused.name==='캐릭터') {
@@ -37,6 +47,7 @@ export function createHandler({service,guildId,verifyContext=contextFor,resolveO
       }
       await i.respond(items.filter(item=>item.name.toLocaleLowerCase().includes(query)).slice(0,25).map(item=>({...item,name:item.name.slice(0,100)})));
     } catch { if(!i.responded) await i.respond([]).catch(()=>{}); }
+    finally {clearTimeout(timer);}
   }
   return async function handle(i) {
     if(i.isAutocomplete()) return autocomplete(i);
