@@ -10,8 +10,11 @@ export const commands=[
     .addSubcommand(s=>s.setName('시작').setDescription('이 스레드에 캐릭터·파티 관리판을 만들어요'))
     .addSubcommand(s=>s.setName('현황').setDescription('현재 스레드의 등록 현황과 관리 버튼을 열어요')),
   root('캐릭터','내 캐릭터를 원하는 만큼 등록하고 관리해요')
-    .addSubcommand(s=>s.setName('등록').setDescription('이 스레드에서 사용할 내 캐릭터를 등록해요')
-      .addStringOption(o=>o.setName('이름').setDescription('캐릭터 닉네임').setMaxLength(30).setRequired(true)))
+    .addSubcommand(s=>s.setName('연결').setDescription('내 API 키를 연결하고 계정 캐릭터를 불러와요'))
+    .addSubcommand(s=>s.setName('동기화').setDescription('내 API 키로 캐릭터 목록을 다시 불러와요'))
+    .addSubcommand(s=>s.setName('연결해제').setDescription('저장한 내 API 키를 삭제하고 자동 추적을 중단해요'))
+    .addSubcommand(s=>charOption(s.setName('스케줄러').setDescription('내 캐릭터의 일일·주간·보스 완료 현황을 봐요')))
+    .addSubcommand(s=>charOption(s.setName('스케줄러갱신').setDescription('내 캐릭터의 스케줄러를 API로 갱신해요')))
     .addSubcommand(s=>s.setName('목록').setDescription('스레드 참가자들이 등록한 캐릭터를 봐요')
       .addUserOption(o=>o.setName('등록자').setDescription('선택한 사람의 캐릭터만 보기')))
     .addSubcommand(s=>charOption(s.setName('수정').setDescription('내가 등록한 캐릭터 정보를 수정해요'))

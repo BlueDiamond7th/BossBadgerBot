@@ -4,18 +4,26 @@ import { requireRule } from './errors.js';
 import { bossById } from './catalog.js';
 import * as view from './views.js';
 
-export function createHandler({service,guildId,tracker=null,verifyContext=contextFor,resolveOwners=eligibleOwners,refreshBoard=async()=>{}}) {
+export function createHandler({service,guildId,tracker=null,connections=null,onConnectionChanged=()=>{},verifyContext=contextFor,resolveOwners=eligibleOwners,refreshBoard=async()=>{}}) {
   function specs(ctx,id,index=0,page=0) {
     requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요. 봇을 업데이트해 주세요.');
     return view.specDetail(tracker.character(ctx,id),tracker.history(ctx,id),tracker.manualHistory(ctx,id),ctx,index,page);
   }
-  async function register(ctx,input,rid) {
-    const c=service.register(ctx,input,rid);
-    let notice=null;
-    if(tracker?.api.apiKey) {
-      try {await tracker.sync(ctx,c.id);} catch {notice='이름 등록은 완료했지만 API 조회는 실패했어요. /캐릭터 스펙갱신으로 다시 시도해 주세요.';}
-    }
-    return {...view.roster(service.snapshot(ctx),0,ctx.userId),...(notice?{content:notice}:{})};
+  function connection(ctx) {
+    requireRule(connections,'개인 API 연결 기능을 사용할 수 없어요. 봇을 업데이트해 주세요.');
+    return view.connectionPanel(connections.status(ctx));
+  }
+  function disconnect(ctx) {
+    requireRule(connections,'개인 API 연결 기능을 사용할 수 없어요.');
+    const row=connections.row(ctx);requireRule(row,'연결된 API 키가 없어요.');
+    return view.disconnectConfirmation(row.version);
+  }
+  function imported(ctx,result) {
+    return {...view.roster(service.snapshot(ctx),0,ctx.userId),content:result.cached?'최근 동기화한 캐릭터 목록입니다. 1분 후 다시 동기화할 수 있어요.':`캐릭터 목록 동기화 완료: 추가 ${result.added}개 · 갱신 ${result.updated}개 · 이름 충돌로 건너뜀 ${result.conflicts}개. 스펙·스케줄러는 자동 수집하거나 개별 갱신할 수 있어요.`};
+  }
+  function scheduler(ctx,id,index=0,page=0) {
+    requireRule(tracker,'스케줄러 기능을 사용할 수 없어요.');
+    return view.schedulerDetail(tracker.character(ctx,id,true),tracker.schedulerHistory(ctx,id),index,page);
   }
   async function respond(i,payload) { return i.editReply({content:null,embeds:[],components:[],allowedMentions:{parse:[]},...payload}); }
   async function getEligible(ctx,i,ids) {ctx.eligibleOwnerIds=await resolveOwners(i.channel,ids);return ctx;}
@@ -67,9 +75,9 @@ export function createHandler({service,guildId,tracker=null,verifyContext=contex
     let changed=false;
     try {
       // Opening a blank modal reveals no saved data. Recheck live membership on submit.
-      if(i.isButton()&&['mp:register','mp:create'].includes(i.customId)) {
+      if(i.isButton()&&['mp:apikey','mp:create'].includes(i.customId)) {
         requireRule(i.inGuild()&&i.guildId===guildId&&supportedChannel(i.channel),'설정한 서버의 일반 채널 또는 스레드에서 사용해 주세요.');
-        return await i.showModal(i.customId==='mp:register'?view.registrationModal():view.creationModal());
+        return await i.showModal(i.customId==='mp:apikey'?view.registrationModal():view.creationModal());
       }
       if((i.isButton()||i.isStringSelectMenu()||i.isModalSubmit())&&i.message?.flags?.has(MessageFlags.Ephemeral)) await i.deferUpdate();
       else await i.deferReply({flags:MessageFlags.Ephemeral});
@@ -81,7 +89,11 @@ export function createHandler({service,guildId,tracker=null,verifyContext=contex
           if(sub==='시작') {service.start(ctx,rid);changed=true;}
           payload=view.board(service.snapshot(ctx));
         } else if(i.commandName==='캐릭터') {
-          if(sub==='등록') {payload=await register(ctx,{name:get('이름')},rid);changed=true;}
+          if(sub==='연결'||sub==='등록') payload=connection(ctx);
+          if(sub==='연결해제') payload=disconnect(ctx);
+          if(sub==='동기화') {connection(ctx);payload=imported(ctx,await connections.refresh(ctx));changed=true;onConnectionChanged();}
+          if(sub==='스케줄러') payload=scheduler(ctx,get('캐릭터'));
+          if(sub==='스케줄러갱신') {requireRule(tracker,'스케줄러 기능을 사용할 수 없어요.');const result=await tracker.syncScheduler(ctx,get('캐릭터'));payload=scheduler(ctx,get('캐릭터'));if(result.cached)payload.content='5분 이내 수집한 기록을 보여드려요.';}
           if(sub==='목록') {
             const owner=i.options.getUser('등록자')?.id??'all',s=service.snapshot(ctx);
             const shown=view.paginate(s.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner)),0,10).items;
@@ -107,11 +119,19 @@ export function createHandler({service,guildId,tracker=null,verifyContext=contex
           if(p) payload=await detail(ctx,i,p.id);
         }
       } else if(i.isModalSubmit()) {
-        if(i.customId==='mp:modal:register') {payload=await register(ctx,{name:i.fields.getTextInputValue('name')},rid);changed=true;}
+        if(i.customId==='mp:modal:register') payload=connection(ctx);
+        if(i.customId==='mp:modal:apikey') {connection(ctx);payload=imported(ctx,await connections.connect(ctx,i.fields.getTextInputValue('apikey')));changed=true;onConnectionChanged();}
         if(i.customId==='mp:modal:create') {const p=service.createParty(ctx,i.fields.getTextInputValue('name'),rid);changed=true;payload=await detail(ctx,i,p.id);}
       } else {
         const [prefix,action,id,a,b]=i.customId.split(':');requireRule(prefix==='mp','지원하지 않는 동작이에요.');
         const selected=i.values?.[0];
+        if(action==='register') payload=connection(ctx);
+        if(action==='accountsync') {connection(ctx);payload=imported(ctx,await connections.refresh(ctx));changed=true;onConnectionChanged();}
+        if(action==='disconnectask') payload=disconnect(ctx);
+        if(action==='disconnect') {connection(ctx);connections.disconnect(ctx,id);payload={...connection(ctx),content:'내 API 연결을 해제했어요. 키를 삭제하고 자동 추적을 중단했습니다. 기존 캐릭터·파티·기록은 유지됩니다.'};}
+        if(action==='schedulerpicker') payload=view.schedulerPicker(service.snapshot(ctx),ctx.userId,Number(id));
+        if(action==='scheduler'||action==='selectscheduler') payload=scheduler(ctx,selected??id,Number(a)||0,Number(b)||0);
+        if(action==='schedulersync') {requireRule(tracker,'스케줄러 기능을 사용할 수 없어요.');const result=await tracker.syncScheduler(ctx,id);payload=scheduler(ctx,id);if(result.cached)payload.content='5분 이내 수집한 기록을 보여드려요.';}
         if(action==='specpicker') payload=view.specPicker(service.snapshot(ctx),Number(id));
         if(action==='selectspec'||action==='spec') payload=specs(ctx,selected??id,Number(a)||0,Number(b)||0);
         if(action==='specsync') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');const result=await tracker.sync(ctx,id);changed=!result.cached;payload=specs(ctx,id);if(result.cached)payload.content='10분 이내 수집한 기록을 보여드려요.';}

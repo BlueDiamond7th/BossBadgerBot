@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { MessageFlags, PermissionFlagsBits, ChannelType } from 'discord.js';
 import { Repository } from '../src/repository.js';
 import { PartyService } from '../src/service.js';
+import { PersonalConnections } from '../src/connections.js';
 import { createHandler } from '../src/interactions.js';
 import { contextFor, isThreadMember, eligibleOwners } from '../src/access.js';
 import { DomainError } from '../src/errors.js';
@@ -21,12 +22,13 @@ function fake(type,properties={}) {
 function command(root,sub,values={}) {return fake('command',{commandName:root,options:{getSubcommand:()=>sub,getString:name=>values[name]??null,getBoolean:name=>values[name]??null,getUser:name=>values[name]??null}});}
 function setup(t,verifyContext=async()=>({...context})) {
   const repo=new Repository(':memory:');t.after(()=>repo.close());const service=new PartyService(repo);
-  const handler=createHandler({service,guildId:'g',verifyContext,resolveOwners:async()=>new Set(['u1','u2'])});return {service,handler};
+  const connections=new PersonalConnections({repository:repo,service,encryptionKey:Buffer.alloc(32,1).toString('base64'),clientFactory:()=>({listCharacters:async()=>[{ocid:'test-ocid',name:'도토리',world:'루나',job:'히어로',level:280}],close(){}})});
+  const handler=createHandler({service,connections,guildId:'g',verifyContext,resolveOwners:async()=>new Set(['u1','u2'])});return {service,handler,connections};
 }
 test('full Discord command and persistent button flow creates party, character and boss',async t=>{
   const {service,handler}=setup(t);
   await handler(command('보스방','시작'));
-  await handler(command('캐릭터','등록',{'이름':'도토리','월드':'루나','직업':'히어로'}));
+  await handler(fake('modal',{customId:'mp:modal:apikey',fields:{getTextInputValue:()=> 'test-key-'.repeat(8)}}));
   await handler(command('파티','생성',{'이름':'목요일팟'}));
   const s=service.snapshot(context),p=s.parties[0];
   await handler(command('파티','캐릭터추가',{'파티':p.id,'캐릭터':s.characters[0].id}));
@@ -120,7 +122,7 @@ test('shared party query publishes a read card and removes private acknowledgeme
 });
 test('private modal submission updates the existing personal message',async t=>{
   const {service,handler}=setup(t);service.start(context,'start');let updates=0,replies=0;
-  const i=fake('modal',{customId:'mp:modal:register',fields:{getTextInputValue:k=>({name:'A',world:'루나',job:'히어로'})[k]},async deferUpdate(){updates++;this.deferred=true;},async deferReply(){replies++;this.deferred=true;}});
+  const i=fake('modal',{customId:'mp:modal:apikey',fields:{getTextInputValue:()=> 'test-key-'.repeat(8)},async deferUpdate(){updates++;this.deferred=true;},async deferReply(){replies++;this.deferred=true;}});
   await handler(i);assert.equal(updates,1);assert.equal(replies,0);assert.equal(service.snapshot(context).characters.length,1);
 });
 test('private navigation replaces the panel without follow-up messages',async t=>{
@@ -168,12 +170,16 @@ test('autocomplete accounts for time already spent before handling',async t=>{
   assert.deepEqual(i.outputs,[[]]);assert.equal(verified,false);
 });
 
-test('registration command and modal request only a character name',async t=>{
+test('API connection replaces manual registration without command options or secret echoes',async t=>{
   const {service,handler}=setup(t);service.start(context,'start');
-  const commandDef=commandJSON().find(c=>c.name==='캐릭터').options.find(c=>c.name==='등록');
-  assert.deepEqual(commandDef.options.map(o=>o.name),['이름']);
+  const defs=commandJSON().find(c=>c.name==='캐릭터').options;
+  assert.equal(defs.some(c=>c.name==='등록'),false);
+  assert.equal(defs.find(c=>c.name==='연결').options?.length??0,0);
   assert.equal(views.registrationModal().toJSON().components.length,1);
-  const i=fake('modal',{customId:'mp:modal:register',fields:{getTextInputValue:key=>{assert.equal(key,'name');return '이름등록';}}});
-  await handler(i);assert.equal(service.snapshot(context).characters[0].world,null);
-  assert.match(i.outputs[0].embeds[0].toJSON().description,/월드 미확인/);
+  const secret='test-key-'.repeat(8);
+  const i=fake('modal',{customId:'mp:modal:apikey',fields:{getTextInputValue:key=>{assert.equal(key,'apikey');return secret;}}});
+  await handler(i);assert.equal(service.snapshot(context).characters[0].world,'루나');
+  assert.ok(!JSON.stringify(i.outputs).includes(secret));
+  const legacy=fake('modal',{customId:'mp:modal:register',fields:{getTextInputValue:()=>assert.fail('must not read old name as key')}});
+  await handler(legacy);assert.equal(service.snapshot(context).characters.length,1);
 });

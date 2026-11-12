@@ -78,3 +78,16 @@ docker compose -p maple-bot exec -T bot node scripts/register.js
 처음에는 앱을 Discord 서버에 초대해야 합니다. 로그에 출력되는 토큰 등 비밀값을 공유하지 마세요. 기존 스크립트는 오류의 코드만 출력하도록 설계되어 있습니다.
 
 참고: [GitHub Actions 워크플로 설정](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax), [GitHub Secrets](https://docs.github.com/en/actions/concepts/security/secrets).
+
+
+## 개인 API 키 연결 적용
+
+서버 `shared/.env`에 `API_KEY_ENCRYPTION_KEY`를 설정합니다. 32바이트 무작위 값의 base64 표현이며, 개인 넥슨 API 키가 아니라 저장 암호화용 서버 비밀값입니다. 예를 들어 Node가 있는 환경에서 다음 명령으로 한 번 생성한 값을 사용합니다.
+
+```sh
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
+```
+
+재배포 시 값을 바꾸지 않습니다. DB 백업을 복원할 때도 동일한 암호화 키가 필요하므로 서버 설정은 별도로 안전하게 보관합니다. 기존 `NEXON_API_KEY` 공용 수집 설정은 이제 사용하지 않습니다. 각 사용자가 Discord의 `내 API 키 연결` 입력창에서 본인의 키를 등록합니다.
+
+배포 후 명령어를 재등록하세요. 암호화 키가 없는 경우 기존 파티 기능은 실행되지만 신규 개인 API 연결은 비활성화됩니다. 실제 API 키로 계정 목록·스펙·스케줄러 조회를 한 번 확인해야 합니다.

@@ -16,15 +16,15 @@ export function paginate(items,page=0,size=15) {
 const pager=(prefix,page,pages)=>row(button(`${prefix}:${page-1}`,'이전',ButtonStyle.Secondary,page===0),button(`${prefix}:${page+1}`,'다음',ButtonStyle.Secondary,page>=pages-1));
 export function board(state) {
   const count=state.characters.filter(c=>c.active).length, parties=state.parties.filter(p=>!p.archived);
-  return {embeds:[base().setTitle('🍁 우리들의 보스방').setDescription('각자 캐릭터를 등록하고, 목록에서 골라 파티를 만들어 보세요.\n이 채널 또는 스레드 안에서 여러 파티와 파티별 보스를 관리해요.').addFields(
+  return {embeds:[base().setTitle('🍁 우리들의 보스방').setDescription('내 API 키로 캐릭터를 불러오고, 목록에서 골라 파티를 만들어 보세요.\n이 채널 또는 스레드 안에서 여러 파티와 파티별 보스를 관리해요.').addFields(
     {name:'등록 캐릭터',value:`${count}개`,inline:true},{name:'활성 파티',value:`${parties.length}개`,inline:true},
     {name:'파티 미리보기',value:parties.slice(0,6).map(p=>`• ${safe(p.name)} · ${p.characterIds.length}명 · 보스 ${p.bosses.length}개`).join('\n')||'아직 파티가 없어요. 파티 만들기부터 시작하세요.'}
-  ).setFooter({text:'캐릭터 수 제한 없음 · 등록은 본인만 · 편성은 파티 생성자/관리자'})],components:[row(button('mp:register','내 캐릭터 등록',ButtonStyle.Primary),button('mp:roster:all:0','캐릭터 목록'),button('mp:create','파티 만들기',ButtonStyle.Primary)),row(button('mp:parties:active:0','파티 목록'),button('mp:parties:archived:0','보관함'),button('mp:board','새로고침'))],allowedMentions:{parse:[]}};
+  ).setFooter({text:'캐릭터 수 제한 없음 · API 연결은 본인만 · 편성은 파티 생성자/관리자'})],components:[row(button('mp:register','내 API 키 연결',ButtonStyle.Primary),button('mp:roster:all:0','캐릭터 목록'),button('mp:create','파티 만들기',ButtonStyle.Primary)),row(button('mp:parties:active:0','파티 목록'),button('mp:parties:archived:0','보관함'),button('mp:board','새로고침'))],allowedMentions:{parse:[]}};
 }
 export function roster(state,page=0,owner='all',eligibleOwnerIds=null) {
   const chars=state.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner));const view=paginate(chars,page,10);
   const lines=view.items.map(c=>`**${safe(c.name)}** · ${safe(c.world??'월드 미확인')} / ${safe(c.job??'직업 미확인')}\n등록자 <@${c.ownerId}>${eligibleOwnerIds&&!eligibleOwnerIds.has(c.ownerId)?' · ⚠️ 현재 참가자 아님':''}`);
-  return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(lines.join('\n\n')||'등록된 캐릭터가 없어요. 각자 내 캐릭터 등록을 눌러 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개 · 닉네임 등록은 소유 인증 전 상태예요.`})],components:[pager(`mp:roster:${owner}`,view.page,view.pages),row(button('mp:register','내 캐릭터 등록',ButtonStyle.Primary),button('mp:specpicker:0','스펙 변화')),home()],allowedMentions:{parse:[]}};
+  return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(lines.join('\n\n')||'등록된 캐릭터가 없어요. 내 API 키 연결을 눌러 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개 · 기존 수동 등록과 API로 불러온 캐릭터가 함께 표시돼요.`})],components:[pager(`mp:roster:${owner}`,view.page,view.pages),row(button('mp:register','내 API 키 연결',ButtonStyle.Primary),button('mp:specpicker:0','스펙 변화'),button('mp:schedulerpicker:0','내 스케줄러')),home()],allowedMentions:{parse:[]}};
 }
 export function partyList(state,page=0,archived=false) {
   const view=paginate(state.parties.filter(p=>p.archived===archived),page);
@@ -72,7 +72,7 @@ export function difficultyPicker(p,bossId) {
   return {content:`**${safe(b.name)}**의 난이도를 선택하세요.`,embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:difficulty:${p.id}:${p.version}:${b.id}`).setPlaceholder('난이도').addOptions(b.difficulties.map(d=>({label:d,value:d})))),row(button(`mp:detail:${p.id}`,'파티로 돌아가기'))],allowedMentions:{parse:[]}};
 }
 export function registrationModal() {
-  return new ModalBuilder().setCustomId('mp:modal:register').setTitle('내 캐릭터 등록').addComponents(...[['name','캐릭터명','도토리검사']].map(([id,label,placeholder])=>row(new TextInputBuilder().setCustomId(id).setLabel(label).setPlaceholder(placeholder).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(30))));
+  return new ModalBuilder().setCustomId('mp:modal:apikey').setTitle('내 API 키 연결').addComponents(row(new TextInputBuilder().setCustomId('apikey').setLabel('이 보스방에 모든 캐릭터를 등록할 개인 API 키').setPlaceholder('메이플스토리용 API 키 · 채팅에 보내지 마세요').setStyle(TextInputStyle.Short).setRequired(true).setMinLength(20).setMaxLength(512)));
 }
 export function creationModal() {return new ModalBuilder().setCustomId('mp:modal:create').setTitle('새 파티 만들기').addComponents(row(new TextInputBuilder().setCustomId('name').setLabel('파티 이름').setPlaceholder('목요일 본캐팟').setMaxLength(60).setStyle(TextInputStyle.Short).setRequired(true)));}
 export function archiveConfirmation(p) {
@@ -108,7 +108,39 @@ export function specDetail(character,history,manual,ctx,index=0,page=0) {
   const components=[row(button(`mp:spec:${character.id}:${pos.page-1}:0`,'더 최근 기록',ButtonStyle.Secondary,pos.page===0),button(`mp:spec:${character.id}:${pos.page+1}:0`,'이전 기록',ButtonStyle.Secondary,pos.page>=pos.pages-1)),
     row(button(`mp:spec:${character.id}:${pos.page}:${list.page-1}`,'이전 변화',ButtonStyle.Secondary,list.page===0),button(`mp:spec:${character.id}:${pos.page}:${list.page+1}`,'다음 변화',ButtonStyle.Secondary,list.page>=list.pages-1))];
   const links=[new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('환산 사이트 열기').setURL(`https://maplescouter.com/ko/info?name=${encodeURIComponent(character.name)}`)];
-  if(character.ownerId===ctx.userId) links.unshift(button(`mp:specsync:${character.id}`,'스펙 갱신',ButtonStyle.Primary));
+  if(character.ownerId===ctx.userId) links.unshift(button(`mp:specsync:${character.id}`,'스펙 갱신',ButtonStyle.Primary),button(`mp:scheduler:${character.id}:0:0`,'내 스케줄러'));
   components.push(row(...links),home());
   return {embeds:[emb],components,allowedMentions:{parse:[]}};
+}
+
+export function connectionPanel(status) {
+  const text=status.connected?`내 API 키가 연결되어 있어요. API 목록 캐릭터 ${status.count}개 · 마지막 동기화 ${stamp(status.importedAt)}`:'내 메이플스토리 API 키를 연결해 보유 캐릭터를 한 번에 불러오세요.';
+  const buttons=[button('mp:apikey',status.connected?'API 키 교체':'API 키 입력',ButtonStyle.Primary,!status.configured)];
+  if(status.connected)buttons.push(button('mp:accountsync','캐릭터 동기화'),button('mp:disconnectask','API 연결 해제',ButtonStyle.Danger));
+  return {content:`${text}\n\n연결하면 API가 반환하는 모든 캐릭터의 이름·월드·직업이 **현재 보스방에 공개**됩니다. 다른 보스방에는 자동 등록하지 않아요.\n키는 암호화 저장하며 응답에 표시하지 않습니다. 스펙은 하루 한 번, 본인 전용 스케줄러는 매시간 수집을 시도해요.\n${status.configured?'API 연결 해제 시 저장된 키를 삭제하고 자동 수집을 중단합니다.':'서버 운영자가 API_KEY_ENCRYPTION_KEY를 먼저 설정해야 해요.'}`,embeds:[],components:[row(...buttons),home()],allowedMentions:{parse:[]}};
+}
+export function disconnectConfirmation(version) {
+  return {content:'이 보스방의 내 API 연결을 해제할까요? 저장된 키와 캐릭터 API 연결 정보를 삭제하고 자동 수집을 중단합니다. 이미 등록한 캐릭터·파티·기록은 유지하며, API 이력에는 보관 기간이 적용됩니다.',embeds:[],components:[row(button(`mp:disconnect:${version}`,'API 연결 해제',ButtonStyle.Danger),button('mp:register','취소'))],allowedMentions:{parse:[]}};
+}
+export function schedulerPicker(state,userId,page=0) {
+  const list=paginate(state.characters.filter(c=>c.active&&c.ownerId===userId),page,25),components=[];
+  if(list.items.length)components.push(row(new StringSelectMenuBuilder().setCustomId('mp:selectscheduler').setPlaceholder('내 캐릭터 선택').addOptions(list.items.map(c=>({label:truncate(c.name),value:c.id})))));
+  components.push(pager('mp:schedulerpicker',list.page,list.pages),home());
+  return {content:list.items.length?'스케줄러를 볼 내 캐릭터를 선택하세요.':'내 API 키를 연결해 캐릭터를 먼저 불러오세요.',embeds:[],components,allowedMentions:{parse:[]}};
+}
+export function schedulerDetail(character,history,index=0,page=0) {
+  const records=paginate(history,index,1),current=records.items[0],lines=[];
+  if(current) {
+    for(const [key,label] of [['daily','일일'],['weekly','주간']]) {
+      if(current[key]===null) {lines.push(`${label}: 정보 미제공`);continue;}
+      for(const item of current[key])lines.push(`[${label}] ${item.name}: ${item.type==='quest'?({'0':'기타','1':'진행 중','2':'완료'}[item.questState]??'미확인'):`${item.now??'?'} / ${item.max??'?'}`}`);
+    }
+    if(current.bosses===null)lines.push('보스: 정보 미제공');
+    else for(const boss of current.bosses)lines.push(`[보스] ${boss.difficulty} ${boss.name}: ${boss.complete===true?'완료':boss.complete===false?'미완료':'미확인'} · ${boss.cycle}`);
+  }
+  if(!lines.length)lines.push(current?'API가 반환한 스케줄러 항목이 없어요.':'아직 수집한 기록이 없어요. 갱신을 누르거나 자동 수집을 기다려 주세요.');
+  const list=paginate(lines,page,8),emb=base().setTitle(`${safe(character.name)} · 내 스케줄러`).setDescription(current?`기준일 ${current.date} · ${stamp(current.collectedAt)} 수집\n주간 보스 ${current.weeklyBossCount??'?'} / ${current.weeklyBossLimit??'?'}\n본인에게만 표시합니다. 파티 클리어·정산에는 자동 반영하지 않아요.`:'개인 API 키로 일일·주간 콘텐츠와 보스 완료 정보를 가져옵니다.');
+  emb.addFields({name:`현황 ${list.page+1}/${list.pages}`,value:list.items.map(line=>safe(line).slice(0,120)).join('\n')});
+  emb.setFooter({text:'Data based on NEXON Open API · 최근 14일 · 날짜별 마지막 수집 상태'});
+  return {embeds:[emb],components:[row(button(`mp:scheduler:${character.id}:${records.page-1}:0`,'최근 날짜',ButtonStyle.Secondary,records.page===0),button(`mp:scheduler:${character.id}:${records.page+1}:0`,'이전 날짜',ButtonStyle.Secondary,records.page>=records.pages-1)),row(button(`mp:scheduler:${character.id}:${records.page}:${list.page-1}`,'이전 항목',ButtonStyle.Secondary,list.page===0),button(`mp:scheduler:${character.id}:${records.page}:${list.page+1}`,'다음 항목',ButtonStyle.Secondary,list.page>=list.pages-1),button(`mp:schedulersync:${character.id}`,'스케줄러 갱신',ButtonStyle.Primary)),home()],allowedMentions:{parse:[]}};
 }

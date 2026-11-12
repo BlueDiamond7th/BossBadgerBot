@@ -3,14 +3,15 @@ import { DomainError, requireRule } from './errors.js';
 
 export const kstDay=(time=Date.now())=>new Date(time+9*3600_000).toISOString().slice(0,10);
 export class NexonClient {
-  constructor({apiKey,fetchImpl=fetch,reserve=()=>true,sleep=delay}) {
-    this.apiKey=apiKey;this.fetch=fetchImpl;this.reserve=reserve;this.sleep=sleep;this.tail=Promise.resolve();this.abort=new AbortController();
+  constructor({apiKey,fetchImpl=fetch,reserve=()=>true,sleep=delay,isActive=()=>true,gate={tail:Promise.resolve()}}) {
+    this.apiKey=apiKey;this.fetch=fetchImpl;this.reserve=reserve;this.sleep=sleep;this.gate=gate;this.isActive=isActive;this.abort=new AbortController();
   }
   close() {this.abort.abort();}
   request(path,params={}) {
-    const work=this.tail.then(async()=>{
+    const work=this.gate.tail.then(async()=>{
       requireRule(!this.abort.signal.aborted,'스펙 수집을 종료했어요.','NEXON_STOPPED');
-      requireRule(this.apiKey,'서버 .env에 NEXON_API_KEY를 설정한 뒤 다시 시도해 주세요.','NEXON_CONFIG');
+      requireRule(this.isActive(),'API 연결이 변경되었어요.','KEY_CHANGED');
+      requireRule(this.apiKey,'내 메이플스토리 API 키를 연결한 뒤 다시 시도해 주세요.','NEXON_CONFIG');
       requireRule(this.reserve(),'오늘의 넥슨 API 호출 예산을 모두 사용했어요. 내일 다시 시도해 주세요.','NEXON_BUDGET');
       try {
         const url=new URL(`https://open.api.nexon.com/maplestory/v1/${path}`);
@@ -21,13 +22,43 @@ export class NexonClient {
           const code=/^OPENAPI\d{5}$/.test(body.error?.name)?body.error.name:'NEXON_HTTP';
           throw new DomainError('넥슨 정보를 조회하지 못했어요. 캐릭터 이름·API 설정·점검 상태를 확인하고 다시 시도해 주세요.',code);
         }
+        requireRule(this.isActive(),'API 연결이 변경되었어요.','KEY_CHANGED');
         return body;
       } catch(error) {
         if(error instanceof DomainError) throw error;
         throw new DomainError('넥슨 API 응답이 지연되거나 올바르지 않아요. 잠시 후 다시 시도해 주세요.','NEXON_NETWORK');
       } finally {await this.sleep(250);}
     });
-    this.tail=work.catch(()=>{});return work;
+    this.gate.tail=work.catch(()=>{});return work;
+  }
+  async listCharacters() {
+    const body=await this.request('character/list');
+    requireRule(Array.isArray(body.account_list),'계정 캐릭터 목록을 확인하지 못했어요.','NEXON_DATA');
+    const result=[],seen=new Set();
+    for(const account of body.account_list) {
+      requireRule(Array.isArray(account.character_list),'계정 캐릭터 목록이 올바르지 않아요.','NEXON_DATA');
+      for(const c of account.character_list) {
+        requireRule(typeof c.ocid==='string'&&c.ocid.length>0&&c.ocid.length<=256&&
+          [c.character_name,c.world_name,c.character_class].every(x=>typeof x==='string'&&x.length>0&&x.length<=30)&&Number.isInteger(c.character_level),'캐릭터 목록 정보가 올바르지 않아요.','NEXON_DATA');
+        if(seen.has(c.ocid))continue;seen.add(c.ocid);
+        result.push({ocid:c.ocid,name:c.character_name,world:c.world_name,job:c.character_class,level:c.character_level});
+      }
+    }
+    return result;
+  }
+  async scheduler(ocid) {
+    const body=await this.request('scheduler/character-state',{ocid});
+    requireRule(typeof body.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(body.date)&&body.character_name,'스케줄러 정보가 없어요. 게임 접속 및 API 제공 상태를 확인해 주세요.','NEXON_NO_SCHEDULER');
+    const flag=value=>value===true||value==='true'?true:value===false||value==='false'?false:null;
+    const count=value=>Number.isInteger(value)&&value>=0?value:null;
+    const section=(items,boss=false)=>Array.isArray(items)?items.map(item=>{
+      requireRule(typeof item.content_name==='string','스케줄러 항목이 올바르지 않아요.','NEXON_DATA');
+      return boss?{name:item.content_name,difficulty:item.difficulty??'',cycle:item.cycle??'',complete:flag(item.complete_flag),registered:flag(item.registration_flag)}:
+        {name:item.content_name,type:item.type??'',now:count(item.now_count),max:count(item.max_count),questState:['0','1','2'].includes(item.quest_state)?item.quest_state:null,registered:flag(item.registration_flag)};
+    }):null;
+    const data={date:body.date,daily:section(body.daily_contents),weekly:section(body.weekly_contents),bosses:section(body.boss_contents,true),weeklyBossCount:count(body.weekly_boss_clear_count),weeklyBossLimit:count(body.weekly_boss_clear_limit_count)};
+    requireRule(data.daily!==null||data.weekly!==null||data.bosses!==null,'스케줄러 정보가 아직 제공되지 않아요.','NEXON_NO_SCHEDULER');
+    return data;
   }
   async collect(name,ocid) {
     if(!ocid) ocid=(await this.request('id',{character_name:name})).ocid;

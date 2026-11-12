@@ -37,8 +37,8 @@ export function specChanges(previous,current) {
 }
 
 export class SpecTracker {
-  constructor({repository,service,api,now=()=>Date.now()}) {
-    this.repo=repository;this.service=service;this.api=api;this.now=now;this.inflight=new Map();this.stopped=false;
+  constructor({repository,service,api=null,connections=null,now=()=>Date.now()}) {
+    this.repo=repository;this.service=service;this.api=api;this.connections=connections;this.now=now;this.inflight=new Map();this.stopped=false;
     repository.db.exec(`CREATE TABLE IF NOT EXISTS spec_profiles (
       guild_id TEXT NOT NULL, thread_id TEXT NOT NULL, character_id TEXT NOT NULL, ocid TEXT NOT NULL,
       PRIMARY KEY(guild_id,thread_id,character_id));
@@ -49,7 +49,11 @@ export class SpecTracker {
       CREATE TABLE IF NOT EXISTS spec_manual (
       id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, thread_id TEXT NOT NULL, character_id TEXT NOT NULL,
       recorded_at INTEGER NOT NULL, value REAL NOT NULL, metric TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS nexon_budget(day TEXT PRIMARY KEY, calls INTEGER NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS nexon_budget(day TEXT PRIMARY KEY, calls INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS scheduler_snapshots (
+      guild_id TEXT NOT NULL,thread_id TEXT NOT NULL,character_id TEXT NOT NULL,
+      day TEXT NOT NULL,collected_at INTEGER NOT NULL,data_json TEXT NOT NULL,
+      PRIMARY KEY(guild_id,thread_id,character_id,day));`);
   }
   reserve(limit=900) {
     const day=kstDay(this.now());
@@ -80,11 +84,13 @@ export class SpecTracker {
     const c=this.character(ctx,id,!automatic),key=`${ctx.guildId}:${ctx.threadId}:${id}`;
     requireRule(!this.stopped,'봇이 종료 중이에요. 잠시 후 다시 시도해 주세요.');
     if(this.inflight.has(key)) return this.inflight.get(key);
+    const session=this.connections?.session(ctx,c);
     const history=this.history(ctx,id),latest=history[0];
     if(latest&&(automatic?latest.day===kstDay(this.now()):this.now()-latest.collectedAt<10*60_000)) return {cached:true};
     const work=(async()=>{
       const profile=this.repo.db.prepare('SELECT ocid FROM spec_profiles WHERE guild_id=? AND thread_id=? AND character_id=?').get(ctx.guildId,ctx.threadId,id);
-      const result=await this.api.collect(c.name,profile?.ocid);
+      const result=await (session?.api??this.api).collect(c.name,session?.ocid??profile?.ocid);
+      session?.assertCurrent();
       if(this.stopped) return {stopped:true};
       // The character may have been renamed or unregistered while requests were pending.
       const current=this.character(ctx,id,!automatic);
@@ -96,7 +102,7 @@ export class SpecTracker {
         requireRule(!state.characters.some(x=>x.active&&x.id!==id&&x.name.toLocaleLowerCase()===result.profile.name.toLocaleLowerCase()&&(!x.world||x.world===result.profile.world)),'API 정보와 중복되는 등록 캐릭터가 있어요. 기존 등록을 확인해 주세요.','DUPLICATE');
         Object.assign(target,result.profile,{apiLinked:true});
         db.prepare('UPDATE workspaces SET state_json=?,revision=revision+1 WHERE guild_id=? AND thread_id=?').run(JSON.stringify(state),ctx.guildId,ctx.threadId);
-        db.prepare('INSERT INTO spec_profiles VALUES(?,?,?,?) ON CONFLICT(guild_id,thread_id,character_id) DO UPDATE SET ocid=excluded.ocid').run(ctx.guildId,ctx.threadId,id,result.ocid);
+        if(!session) db.prepare('INSERT INTO spec_profiles VALUES(?,?,?,?) ON CONFLICT(guild_id,thread_id,character_id) DO UPDATE SET ocid=excluded.ocid').run(ctx.guildId,ctx.threadId,id,result.ocid);
         db.prepare('INSERT INTO spec_snapshots VALUES(?,?,?,?,?,?,?)').run(snapshotId,ctx.guildId,ctx.threadId,id,now,kstDay(now),JSON.stringify(result.data));
         db.exec('COMMIT');
       } catch(error) {db.exec('ROLLBACK');throw error;}
@@ -105,27 +111,53 @@ export class SpecTracker {
     this.inflight.set(key,work);
     try {return await work;} finally {this.inflight.delete(key);}
   }
+  schedulerHistory(ctx,id) {
+    this.character(ctx,id,true);this.prune();
+    return this.repo.db.prepare('SELECT * FROM scheduler_snapshots WHERE guild_id=? AND thread_id=? AND character_id=? ORDER BY day DESC LIMIT 14').all(ctx.guildId,ctx.threadId,id).map(row=>({...JSON.parse(row.data_json),collectedAt:row.collected_at}));
+  }
+  async syncScheduler(ctx,id,{automatic=false}={}) {
+    const c=this.character(ctx,id,true);
+    requireRule(this.connections,'개인 API 키를 먼저 연결해 주세요.','KEY_MISSING');
+    requireRule(!this.stopped,'봇이 종료 중이에요.');
+    const session=this.connections.session(ctx,c),key=`scheduler:${ctx.guildId}:${ctx.threadId}:${id}`;
+    if(this.inflight.has(key))return this.inflight.get(key);
+    const latest=this.schedulerHistory(ctx,id)[0];
+    if(latest&&latest.date===kstDay(this.now())&&this.now()-latest.collectedAt<(automatic?3600_000:5*60_000))return {cached:true};
+    const work=(async()=>{
+      const result=await session.api.scheduler(session.ocid);session.assertCurrent();
+      if(this.stopped)return {stopped:true};
+      this.character(ctx,id,true);
+      this.repo.db.prepare('INSERT INTO scheduler_snapshots VALUES(?,?,?,?,?,?) ON CONFLICT(guild_id,thread_id,character_id,day) DO UPDATE SET collected_at=excluded.collected_at,data_json=excluded.data_json').run(ctx.guildId,ctx.threadId,id,result.date,this.now(),JSON.stringify(result));
+      return {cached:false};
+    })();
+    this.inflight.set(key,work);
+    try {return await work;} finally {this.inflight.delete(key);}
+  }
   prune() {
+    this.repo.db.prepare('DELETE FROM scheduler_snapshots WHERE day<?').run(kstDay(this.now()-13*86400_000));
     this.repo.db.prepare('DELETE FROM spec_snapshots WHERE collected_at<?').run(this.now()-RETENTION_MS);
     this.repo.db.prepare('DELETE FROM nexon_budget WHERE day<?').run(kstDay(this.now()-2*86400_000));
   }
   async sweep({guildId,canCollect=async()=>true,onUpdate=async()=>{}}) {
     this.prune();
     const rows=this.repo.db.prepare('SELECT guild_id,thread_id,state_json FROM workspaces WHERE guild_id=?').all(guildId);
-    for(const row of rows) for(const c of JSON.parse(row.state_json).characters.filter(c=>c.active)) {
+    const targets=[];
+    for(const row of rows) for(const c of JSON.parse(row.state_json).characters.filter(c=>c.active)) targets.push({ctx:{guildId:row.guild_id,threadId:row.thread_id,userId:c.ownerId},id:c.id});
+    // Collect scheduler state first so a large equipment import cannot consume its entire budget.
+    for(const kind of this.connections?['scheduler','spec']:['spec']) for(const {ctx,id} of targets) {
       if(this.stopped) return;
-      const ctx={guildId:row.guild_id,threadId:row.thread_id,userId:c.ownerId};
       try {
-        if(this.history(ctx,c.id)[0]?.day===kstDay(this.now())) continue;
-        if(!await canCollect(ctx)) continue;
-        await this.sync(ctx,c.id,{automatic:true});
-        if(this.stopped) return;
-        await onUpdate(ctx);
+        if(kind==='spec'&&this.history(ctx,id)[0]?.day===kstDay(this.now()))continue;
+        if(this.connections&&!this.connections.status(ctx).connected)continue;
+        if(!await canCollect(ctx))continue;
+        const result=kind==='scheduler'?await this.syncScheduler(ctx,id,{automatic:true}):await this.sync(ctx,id,{automatic:true});
+        if(this.stopped)return;
+        if(kind==='spec'&&!result.cached)await onUpdate(ctx);
       } catch(error) {
         console.warn('[spec-sync]',error.code??'FAILED');
-        if(['NEXON_BUDGET','NEXON_CONFIG','OPENAPI00005','OPENAPI00007'].includes(error.code)) return;
+        if(!this.connections&&['NEXON_BUDGET','NEXON_CONFIG','OPENAPI00005','OPENAPI00007'].includes(error.code))return;
       }
     }
   }
-  async stop() {this.stopped=true;this.api.close?.();await Promise.allSettled([...this.inflight.values()]);}
+  async stop() {this.stopped=true;this.api?.close?.();await Promise.allSettled([...this.inflight.values()]);}
 }
