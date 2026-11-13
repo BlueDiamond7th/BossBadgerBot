@@ -193,8 +193,14 @@ export function priceTable({prices,overrides}) {
 
 // ---- 보스 기록 ----
 // split=true shows how a saved clear is divided: "가격 ÷ N명 = 1인 몫".
-const clearedLines=(cleared,prices,split=false)=>cleared.map((b,i)=>{
-  const price=entryPrice(b,prices),label=`${split?`${i+1}. `:'• '}${safe(b.difficulty)} ${safe(b.name)}${b.monthly?' (월간)':''}`;
+// Weekly bosses first and numbered; monthly bosses go last without a number.
+// `index` stays the position in the saved list so edits keep pointing at the same entry.
+const ordered=cleared=>{
+  const rows=cleared.map((b,index)=>({b,index}));let no=0;
+  return [...rows.filter(r=>!r.b.monthly),...rows.filter(r=>r.b.monthly)].map(r=>({...r,no:r.b.monthly?null:++no}));
+};
+const clearedLines=(cleared,prices,split=false)=>ordered(cleared).map(({b,no})=>{
+  const price=entryPrice(b,prices),label=`${split&&no?`${no}. `:'• '}${safe(b.difficulty)} ${safe(b.name)}${b.monthly?' (월간)':''}`;
   if(!price) return `${label}${split?' · 가격 없음':''}`;
   return split?`${label} · ${formatMeso(price)} ÷ ${b.partySize??1}명 = **${formatMeso(entryShare(b,prices))}**`:`${label} · ${formatMeso(price)}`;
 });
@@ -244,7 +250,7 @@ export function bossHistory({character,options},prices,{selected=null,canEdit=fa
 export function bossWeekEditor({character,week:w},prices,notice=null) {
   const emb=base().setTitle(`${safe(character.name)} · ${weekLabel(w.week)} 편집`).setDescription(`${clearedLines(w.cleared,prices,true).join('\n').slice(0,3800)}\n\n**1인 몫 합계 ${formatMeso(clearedValue(w.cleared,prices))}**`)
     .setFooter({text:'보스를 고르고 함께 클리어한 인원을 선택하면 결정석 가격을 그 인원만큼 나눠요.'});
-  const options=w.cleared.slice(0,25).map((b,i)=>({label:truncate(`${i+1}. ${b.difficulty} ${b.name}`),value:String(i),description:truncate(`${b.partySize??1}인 · 최대 ${entryLimit(b)}인${entryPrice(b,prices)?` · 1인 ${formatMeso(entryShare(b,prices))}`:' · 가격 없음'}`)}));
+  const options=ordered(w.cleared).slice(0,25).map(({b,index:i,no})=>({label:truncate(no?`${no}. ${b.difficulty} ${b.name}`:`${b.difficulty} ${b.name} (월간)`),value:String(i),description:truncate(`${b.partySize??1}인 · 최대 ${entryLimit(b)}인${entryPrice(b,prices)?` · 1인 ${formatMeso(entryShare(b,prices))}`:' · 가격 없음'}`)}));
   return {content:notice,embeds:[emb],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:bhboss:${character.id}:${w.week}:${w.rev??0}`).setPlaceholder('인원을 바꿀 보스 선택').addOptions(options)),row(button(`mp:bhshow:${character.id}:${w.week}`,'히스토리로 돌아가기')),home()],allowedMentions:{parse:[]}};
 }
 export function partySizePicker({character,week:w},index,prices) {
