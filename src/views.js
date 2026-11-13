@@ -123,10 +123,20 @@ export function specDetail(character,history,manual,ctx,index=0,page=0) {
 }
 
 export function connectionPanel(status) {
-  const text=status.connected?`내 API 키가 연결되어 있어요. API 목록 캐릭터 ${status.count}개 · 마지막 동기화 ${stamp(status.importedAt)}`:'내 메이플스토리 API 키를 연결해 보유 캐릭터를 한 번에 불러오세요.';
+  const text=status.connected?`내 API 키가 연결되어 있어요. 등록한 캐릭터 ${status.count}개 / 계정 캐릭터 ${status.accountCount??'?'}개 · 마지막 동기화 ${stamp(status.importedAt)}`:'내 메이플스토리 API 키를 연결하고, 계정 캐릭터 중 보스방에 쓸 캐릭터를 골라 등록하세요.';
   const buttons=[button('mp:apikey',status.connected?'API 키 교체':'API 키 입력',ButtonStyle.Primary,!status.configured)];
-  if(status.connected)buttons.push(button('mp:accountsync','캐릭터 동기화'),button('mp:disconnectask','API 연결 해제',ButtonStyle.Danger));
-  return {content:`${text}\n\n연결하면 API가 반환하는 모든 캐릭터의 이름·월드·직업이 **현재 보스방에 공개**됩니다. 다른 보스방에는 자동 등록하지 않아요.\n키는 암호화 저장하며 응답에 표시하지 않습니다. 스펙은 하루 한 번, 본인 전용 스케줄러는 매시간 수집을 시도해요.\n${status.configured?'API 연결 해제 시 저장된 키를 삭제하고 자동 수집을 중단합니다.':'서버 운영자가 API_KEY_ENCRYPTION_KEY를 먼저 설정해야 해요.'}`,embeds:[],components:[row(...buttons),home()],allowedMentions:{parse:[]}};
+  if(status.connected)buttons.splice(0,0,button('mp:accountpick:0','캐릭터 선택',ButtonStyle.Primary)),buttons.push(button('mp:accountsync','캐릭터 동기화'),button('mp:disconnectask','API 연결 해제',ButtonStyle.Danger));
+  return {content:`${text}\n\n키를 입력하면 계정 캐릭터 목록을 **나에게만** 보여 주고, 선택한 캐릭터만 이름·월드·직업이 **현재 보스방에 공개**됩니다. 다른 보스방에는 자동 등록하지 않아요.\n키는 암호화 저장하며 응답에 표시하지 않습니다. 스펙은 하루 한 번, 본인 전용 스케줄러는 매시간 수집을 시도해요.\n${status.configured?'API 연결 해제 시 저장된 키를 삭제하고 자동 수집을 중단합니다.':'서버 운영자가 API_KEY_ENCRYPTION_KEY를 먼저 설정해야 해요.'}`,embeds:[],components:[row(...buttons),home()],allowedMentions:{parse:[]}};
+}
+// Private picker over the connected account's characters; one selection registers one character.
+export function accountPicker(characters,page=0,notice=null) {
+  const candidates=characters.filter(c=>!c.linked),linked=characters.length-candidates.length,list=paginate(candidates,page,25),components=[];
+  if(list.items.length) components.push(row(new StringSelectMenuBuilder().setCustomId('mp:accountselect').setPlaceholder('보스방에 등록할 캐릭터 하나 선택').addOptions(list.items.map(c=>({label:truncate(`${c.name} · Lv.${c.level}`),value:c.id,description:truncate(`${c.world} · ${c.job}`)})))));
+  // Connections made before the picker existed have no stored list until the next sync.
+  if(!characters.length) return {content:`${notice?`${notice}\n\n`:''}저장된 계정 캐릭터 목록이 없어요. 캐릭터 동기화를 눌러 목록을 불러오세요.`,embeds:[],components:[row(button('mp:accountsync','캐릭터 동기화',ButtonStyle.Primary),button('mp:register','연결 설정')),home()],allowedMentions:{parse:[]}};
+  components.push(row(button(`mp:accountpick:${list.page-1}`,'이전',ButtonStyle.Secondary,list.page===0),button(`mp:accountpick:${list.page+1}`,'다음',ButtonStyle.Secondary,list.page>=list.pages-1),button('mp:register','연결 설정')),home());
+  const body=candidates.length?`등록할 캐릭터를 **하나** 고르세요. 더 등록하려면 다시 고르면 돼요.\n계정 캐릭터 ${characters.length}개 · 이미 등록 ${linked}개 · ${list.page+1}/${list.pages} 페이지 (레벨순)`:`계정 캐릭터 ${characters.length}개를 모두 등록했어요.`;
+  return {content:`${notice?`${notice}\n\n`:''}${body}\n목록은 나에게만 보이며 선택하기 전에는 보스방에 공개되지 않아요.`,embeds:[],components,allowedMentions:{parse:[]}};
 }
 export function disconnectConfirmation(version) {
   return {content:'이 보스방의 내 API 연결을 해제할까요? 저장된 키와 캐릭터 API 연결 정보를 삭제하고 자동 수집을 중단합니다. 이미 등록한 캐릭터·파티·기록은 유지하며, API 이력에는 보관 기간이 적용됩니다.',embeds:[],components:[row(button(`mp:disconnect:${version}`,'API 연결 해제',ButtonStyle.Danger),button('mp:register','취소'))],allowedMentions:{parse:[]}};

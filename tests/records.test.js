@@ -41,7 +41,7 @@ function setup(t,{connect=['u1','u2','u3']}={}) {
   const records=new BossRecords({repository,service,tracker,connections,now:()=>now});
   return {repository,service,connections,tracker,records,calls,advance:ms=>now+=ms,
     async ready() {
-      for(const u of connect) await connections.connect(ctx(u),keyOf(u));
+      for(const u of connect) {await connections.connect(ctx(u),keyOf(u));for(const c of connections.accountCharacters(ctx(u))) connections.select(ctx(u),c.id);}
       const s=service.snapshot(ctx()),chars=Object.fromEntries(Object.keys(ACCOUNTS).map(u=>[u,s.characters.find(c=>c.ownerId===u)]));
       const p=service.createParty(ctx(),'목요일팟','party');
       for(const u of ['u1','u2']) if(chars[u]) service.addCharacter(ctx(),p.id,chars[u].id,`add-${u}`);

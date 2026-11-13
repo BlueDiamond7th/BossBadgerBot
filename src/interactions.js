@@ -30,8 +30,10 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
     const row=connections.row(ctx);requireRule(row,'연결된 API 키가 없어요.');
     return view.disconnectConfirmation(row.version);
   }
+  // After a key is entered or synced, show the private picker instead of registering every character.
   function imported(ctx,result) {
-    return {...view.roster(service.snapshot(ctx),0,ctx.userId),content:result.cached?'최근 동기화한 캐릭터 목록입니다. 1분 후 다시 동기화할 수 있어요.':`캐릭터 목록 동기화 완료: 추가 ${result.added}개 · 갱신 ${result.updated}개 · 이름 충돌로 건너뜀 ${result.conflicts}개. 스펙·스케줄러는 자동 수집하거나 개별 갱신할 수 있어요.`};
+    const notice=result.cached?'최근 동기화한 계정 목록입니다. 1분 후 다시 동기화할 수 있어요.':`계정 캐릭터 ${result.total}개를 불러왔어요.${result.updated?` 등록한 캐릭터 ${result.updated}개의 정보를 갱신했어요.`:''}`;
+    return view.accountPicker(connections.accountCharacters(ctx),0,notice);
   }
   function scheduler(ctx,id,index=0,page=0) {
     requireRule(tracker,'스케줄러 기능을 사용할 수 없어요.');
@@ -170,6 +172,11 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         const [prefix,action,id,a,b]=i.customId.split(':');requireRule(prefix==='mp','지원하지 않는 동작이에요.');
         const selected=i.values?.[0];
         if(action==='register') payload=connection(ctx);
+        if(action==='accountpick') {connection(ctx);payload=view.accountPicker(connections.accountCharacters(ctx),Number(id));}
+        if(action==='accountselect') {
+          connection(ctx);const result=connections.select(ctx,selected);changed=true;onConnectionChanged();
+          payload=view.accountPicker(connections.accountCharacters(ctx),0,`**${view.safe(result.character.name)}**을(를) 보스방에 ${result.added?'등록':'연결'}했어요. 스펙·스케줄러는 자동 수집하거나 개별 갱신할 수 있어요.`);
+        }
         if(action==='accountsync') {connection(ctx);payload=imported(ctx,await connections.refresh(ctx));changed=true;onConnectionChanged();}
         if(action==='disconnectask') payload=disconnect(ctx);
         if(action==='disconnect') {connection(ctx);connections.disconnect(ctx,id);payload={...connection(ctx),content:'내 API 연결을 해제했어요. 키를 삭제하고 자동 추적을 중단했습니다. 기존 캐릭터·파티·기록은 유지됩니다.'};}
