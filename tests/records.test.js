@@ -330,3 +330,24 @@ test('a party member saving with the save button returns to the saved week and n
   const outsider=fake('button',{user:{id:'u3'},customId:`mp:bhquick:${chars.u1.id}:current`});await handler(outsider);
   assert.match(outsider.outputs[0].content,/같은 파티의 파티원/);
 });
+
+test('monthly bosses are listed last without a number, and editing still targets the right entry',async t=>{
+  const {handler,chars,repository,records}=await handlerFor(t);
+  const cleared=[
+    {name:'스우',bossId:'lotus',difficulty:'익스트림',monthly:false},
+    {name:'검은 마법사',bossId:'blackmage',difficulty:'익스트림',monthly:true},
+    {name:'감시자 칼로스',bossId:'kalos',difficulty:'카오스',monthly:false},
+  ];
+  repository.db.prepare('INSERT INTO boss_history VALUES(?,?,?,?,?,?,?)').run('g','t',chars.u1.id,'2026-11-05',JSON.stringify({week:'2026-11-05',day:'2026-11-11',clearCount:2,clearLimit:12,cleared}),'u1',1);
+  const open=command('보스기록','히스토리',{'캐릭터':chars.u1.id});await handler(open);
+  assert.deepEqual(open.outputs[0].embeds[0].toJSON().fields[0].value.split('\n').map(l=>l.split(' · ')[0]),
+    ['1. 익스트림 스우','2. 카오스 감시자 칼로스','• 익스트림 검은 마법사 (월간)']);
+  const edit=fake('button',{customId:`mp:bhedit:${chars.u1.id}:2026-11-05`});await handler(edit);
+  const options=edit.outputs[0].components[0].toJSON().components[0].options;
+  assert.deepEqual(options.map(o=>[o.label,o.value]),[['1. 익스트림 스우','0'],['2. 카오스 감시자 칼로스','2'],['익스트림 검은 마법사 (월간)','1']]);
+  assert.match(edit.outputs[0].embeds[0].toJSON().description,/^1\. 익스트림 스우[^\n]*\n2\. 카오스 감시자 칼로스[^\n]*\n• 익스트림 검은 마법사 \(월간\)/);
+  // Picking "2. 카오스 감시자 칼로스" edits the 칼로스 entry, not the monthly one stored between them.
+  const pick=fake('select',{customId:options.length&&edit.outputs[0].components[0].toJSON().components[0].custom_id,values:['2']});await handler(pick);
+  await handler(fake('select',{customId:pick.outputs[0].components[0].toJSON().components[0].custom_id,values:['3']}));
+  assert.deepEqual(records.week(ctx(),chars.u1.id,'2026-11-05').week.cleared.map(b=>b.partySize??1),[1,1,3]);
+});
