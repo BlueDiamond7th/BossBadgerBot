@@ -77,7 +77,7 @@ test('context rejects other servers, non-threads, and managers not joined to thr
   await assert.rejects(()=>contextFor(i,'g'),{code:'NOT_MEMBER'});
 });
 test('guild-only command definitions serialize with Discord validators',()=>{
-  const data=commandJSON();assert.equal(data.length,3);assert.equal(new Set(data.map(x=>x.name)).size,3);
+  const data=commandJSON();assert.equal(data.length,6);assert.equal(new Set(data.map(x=>x.name)).size,6);
   for(const c of data) {assert.deepEqual(c.contexts,[0]);assert.ok(c.options.length<=25);}
 });
 function checkPayload(payload) {

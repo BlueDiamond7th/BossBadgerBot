@@ -1,10 +1,22 @@
 import { MessageFlags } from 'discord.js';
 import { contextFor, supportedChannel, eligibleOwners, requireEditable, visibleError } from './access.js';
 import { requireRule } from './errors.js';
+import { formatMeso } from './revenue.js';
 import { bossById } from './catalog.js';
 import * as view from './views.js';
 
-export function createHandler({service,guildId,tracker=null,connections=null,onConnectionChanged=()=>{},verifyContext=contextFor,resolveOwners=eligibleOwners,refreshBoard=async()=>{}}) {
+export function createHandler({service,guildId,tracker=null,connections=null,records=null,prices=null,distributions=null,onConnectionChanged=()=>{},verifyContext=contextFor,resolveOwners=eligibleOwners,refreshBoard=async()=>{}}) {
+  const priceMap=gid=>prices?.all(gid).prices??{};
+  const need=(feature,label)=>{requireRule(feature,`${label} 기능을 사용할 수 없어요. 봇을 업데이트해 주세요.`);return feature;};
+  // Edits the shared card the button or modal came from; ephemeral panels are replaced by the normal reply.
+  async function editPublic(i,payload) {if(i.message&&!i.message.flags?.has(MessageFlags.Ephemeral)) await i.message.edit({...payload,allowedMentions:{parse:[]}}).catch(()=>console.warn('[card] edit-failed'));}
+  // Opening a modal must be the first response, so these checks use stored data only; submit rechecks membership.
+  function quickContext(i) {
+    requireRule(i.inGuild()&&i.guildId===guildId&&supportedChannel(i.channel),'설정한 서버의 일반 채널 또는 스레드에서 사용해 주세요.');
+    return {guildId:i.guildId,threadId:i.channel.id,userId:i.user.id};
+  }
+  // Viewing another member's boss records notifies that member.
+  const bossNotice=(record,what)=>({owner:record.ownerId,name:record.characterName,what});
   function specs(ctx,id,index=0,page=0) {
     requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요. 봇을 업데이트해 주세요.');
     return view.specDetail(tracker.character(ctx,id),tracker.history(ctx,id),tracker.manualHistory(ctx,id),ctx,index,page);
@@ -30,7 +42,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,onC
   async function detail(ctx,i,id) {
     const p=service.getParty(ctx,id,true),s=service.snapshot(ctx);
     await getEligible(ctx,i,p.characterIds.map(cid=>s.characters.find(c=>c.id===cid)?.ownerId).filter(Boolean));
-    return view.partyDetail(s,p,ctx,service.warnings(s,p));
+    return view.partyDetail(s,p,ctx,service.warnings(s,p),prices?priceMap(ctx.guildId):null);
   }
   async function withPartyOwners(ctx,i,id) {
     const s=service.snapshot(ctx),p=service.getParty(ctx,id,true);
@@ -71,13 +83,23 @@ export function createHandler({service,guildId,tracker=null,connections=null,onC
   }
   return async function handle(i) {
     if(i.isAutocomplete()) return autocomplete(i);
-    if(!i.isChatInputCommand()&&!i.isButton()&&!i.isStringSelectMenu()&&!i.isModalSubmit()) return;
-    let changed=false;
+    if(!i.isChatInputCommand()&&!i.isButton()&&!i.isStringSelectMenu()&&!i.isModalSubmit()&&!i.isUserSelectMenu?.()) return;
+    let changed=false,notice=null,publicPost=null;
     try {
       // Opening a blank modal reveals no saved data. Recheck live membership on submit.
       if(i.isButton()&&['mp:apikey','mp:create'].includes(i.customId)) {
         requireRule(i.inGuild()&&i.guildId===guildId&&supportedChannel(i.channel),'설정한 서버의 일반 채널 또는 스레드에서 사용해 주세요.');
         return await i.showModal(i.customId==='mp:apikey'?view.registrationModal():view.creationModal());
+      }
+      if(i.isUserSelectMenu?.()&&i.customId.startsWith('mp:distseller:')) {
+        const pid=i.customId.split(':')[2],seller=i.values[0];
+        need(distributions,'분배').requireSeller(quickContext(i),pid,seller);
+        return await i.showModal(view.distModal(`mp:modal:dist:${pid}:${seller}`));
+      }
+      if(i.isButton()&&i.customId.startsWith('mp:distedit:')) {
+        const record=need(distributions,'분배').get(quickContext(i),i.customId.split(':')[2]);
+        requireRule(record.sellerId===i.user.id,'판매자로 지정된 사람만 수정할 수 있어요.','FORBIDDEN');
+        return await i.showModal(view.distModal(`mp:modal:distedit:${record.id}`,record));
       }
       if((i.isButton()||i.isStringSelectMenu()||i.isModalSubmit())&&i.message?.flags?.has(MessageFlags.Ephemeral)) await i.deferUpdate();
       else await i.deferReply({flags:MessageFlags.Ephemeral});
@@ -117,11 +139,33 @@ export function createHandler({service,guildId,tracker=null,connections=null,onC
           if(sub==='이름변경') {p=service.renameParty(ctx,pid,get('이름'),rid);changed=true;}
           if(sub==='보관'||sub==='복원') {const existing=service.getParty(ctx,pid,true);requireEditable(ctx,existing);requireRule(sub==='복원'?existing.archived:!existing.archived,sub==='복원'?'이미 활성 상태인 파티예요.':'이미 보관한 파티예요.');payload=view.archiveConfirmation(existing);}
           if(p) payload=await detail(ctx,i,p.id);
+        } else if(i.commandName==='보스기록') {
+          const r=need(records,'보스 기록'),id=get('캐릭터');
+          if(sub==='조회') {const result=await r.view(ctx,id,get('주차')??'current');payload=view.bossRecord(result.record,priceMap(ctx.guildId),{fetched:result.fetched});notice=bossNotice(result.record,`${result.record.week} 주차 보스 기록`);}
+          if(sub==='히스토리') {const h=r.history(ctx,id);payload=view.bossHistory(h,0,priceMap(ctx.guildId));notice={owner:h.character.ownerId,name:h.character.name,what:'보스 히스토리'};}
+        } else if(i.commandName==='결정석') {
+          const book=need(prices,'결정석 가격');
+          if(sub==='가격표') payload=view.priceTable(book.all(ctx.guildId));
+          if(sub==='가격수정') {const r=book.set(ctx,get('보스'),get('난이도'),get('가격'));payload={...view.priceTable(book.all(ctx.guildId)),content:`${r.difficulty} ${r.boss.name} 결정석 가격을 ${formatMeso(r.before)} → ${formatMeso(r.price)}(으)로 수정했어요.`};}
+        } else if(i.commandName==='분배') {
+          if(sub==='시작') payload=view.distQuestion(service.getParty(ctx,pid));
+          if(sub==='목록') payload=view.distList(service.getParty(ctx,pid,true),need(distributions,'분배').list(ctx,pid),0);
         }
       } else if(i.isModalSubmit()) {
         if(i.customId==='mp:modal:register') payload=connection(ctx);
         if(i.customId==='mp:modal:apikey') {connection(ctx);payload=imported(ctx,await connections.connect(ctx,i.fields.getTextInputValue('apikey')));changed=true;onConnectionChanged();}
         if(i.customId==='mp:modal:create') {const p=service.createParty(ctx,i.fields.getTextInputValue('name'),rid);changed=true;payload=await detail(ctx,i,p.id);}
+        const [,,kind,id,seller]=i.customId.split(':');
+        if(kind==='dist') {
+          const book=need(distributions,'분배');book.requireSeller(ctx,id,seller);
+          await getEligible(ctx,i,[seller]);requireRule(ctx.eligibleOwnerIds.has(seller),'판매자가 현재 채널/스레드 참가자가 아니에요.','NOT_MEMBER');
+          const record=book.create(ctx,{partyId:id,sellerId:seller,item:i.fields.getTextInputValue('item'),price:i.fields.getTextInputValue('price')},rid);
+          publicPost=view.distCard(record);payload={content:'분배금 계산 결과를 채널에 게시했어요.'};
+        }
+        if(kind==='distedit') {
+          const record=need(distributions,'분배').update(ctx,id,{item:i.fields.getTextInputValue('item'),price:i.fields.getTextInputValue('price'),memberCount:i.fields.getTextInputValue('members')});
+          payload=view.distCard(record);await editPublic(i,payload);payload.content='분배 기록을 수정하고 수정 로그를 저장했어요.';
+        }
       } else {
         const [prefix,action,id,a,b]=i.customId.split(':');requireRule(prefix==='mp','지원하지 않는 동작이에요.');
         const selected=i.values?.[0];
@@ -154,6 +198,24 @@ export function createHandler({service,guildId,tracker=null,connections=null,onC
         if(action==='difficulty') {service.addBoss(ctx,id,b,selected,rid,Number(a));changed=true;payload=await detail(ctx,i,id);}
         if(action==='removeboss') {service.removeBoss(ctx,id,selected,rid,Number(a));changed=true;payload=await detail(ctx,i,id);}
         if(action==='copy') {await withPartyOwners(ctx,i,id);const p=service.copyParty(ctx,id,null,rid);changed=true;payload=await detail(ctx,i,p.id);}
+        if(action==='bhrefresh') {
+          const r=need(records,'보스 기록'),period=a==='last'?'last':'current',result=await r.refresh(ctx,id,period),record=r.cached(ctx,id,period);
+          requireRule(record,'해당 주차의 스케줄러 기록을 찾지 못했어요. 게임 접속 여부와 API 제공 상태를 확인해 주세요.','NEXON_NO_SCHEDULER');
+          payload=view.bossRecord(record,priceMap(ctx.guildId),{fetched:!result.cached,refreshed:result.cached?'cached':'fetched'});
+          if(!result.cached) notice=bossNotice(record,`${record.week} 주차 보스 기록`);
+        }
+        if(action==='bhsave') payload=view.bossSaved(need(records,'보스 기록').save(ctx,id,a,Number(b)),priceMap(ctx.guildId));
+        if(action==='bhskip') payload=view.bossSkipped(id);
+        if(action==='bhist') payload=view.bossHistory(need(records,'보스 기록').history(ctx,id),Number(a),priceMap(ctx.guildId));
+        if(action==='dist') payload=view.distQuestion(service.getParty(ctx,id));
+        if(action==='distno') payload={content:'분배할 아이템이 없어 분배 계산을 진행하지 않았어요.',components:[view.backToParty(id)]};
+        if(action==='distyes') payload=view.distSellerPicker(service.getParty(ctx,id));
+        if(action==='distlist') payload=view.distList(service.getParty(ctx,id,true),need(distributions,'분배').list(ctx,id),Number(a));
+        if(action==='distopen') payload=view.distCard(need(distributions,'분배').get(ctx,selected));
+        if(action==='distmvp') {
+          const book=need(distributions,'분배'),record=book.update(ctx,id,{mvp:!book.get(ctx,id).mvp});
+          payload=view.distCard(record);await editPublic(i,payload);
+        }
         if(action==='archive') {const p=requireEditable(ctx,service.getParty(ctx,id,true),Number(a));payload=view.archiveConfirmation(p);}
         if(action==='confirmarchive') {
           requireEditable(ctx,service.getParty(ctx,id,true),Number(a));
@@ -169,6 +231,8 @@ export function createHandler({service,guildId,tracker=null,connections=null,onC
         await i.followUp({...payload,allowedMentions:{parse:[]}});
         await i.deleteReply();
       } else await respond(i,payload);
+      if(publicPost) await i.followUp({...publicPost,allowedMentions:{parse:[]}});
+      if(notice&&notice.owner!==ctx.userId) await i.followUp({content:`<@${notice.owner}> <@${ctx.userId}>님이 **${view.safe(notice.name)}**의 ${notice.what}을 조회했어요.`,allowedMentions:{users:[notice.owner]}}).catch(()=>console.warn('[notice] send-failed'));
       if(changed) {
         try {await refreshBoard(i,ctx);} catch(error) {
           console.warn('[board-refresh]',error.code??error.name);
