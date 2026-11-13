@@ -238,7 +238,7 @@ test('picking an unsaved week loads a preview once; saving makes it a saved week
   const menu=weekMenu(open.outputs[0]);
   assert.match(menu.options[1].description,/^지난주 · 저장됨 · 클리어 3개 · 1인 몫/);assert.equal(menu.options[1].default,true);
   assert.equal(open.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 1주차 (11/5~11/11)');
-  assert.deepEqual(open.outputs[0].components[1].toJSON().components.map(b=>b.label),['인원 편집','다른 캐릭터']);
+  assert.deepEqual(open.outputs[0].components.slice(1,3).map(r=>r.toJSON().components.map(b=>b.label)),[['이번 주 저장'],['인원 편집','다른 캐릭터']]);
 });
 test('a saved current week offers an explicit reload; party members see results without edit controls',async t=>{
   const {handler,chars,calls,advance}=await handlerFor(t);
@@ -246,12 +246,12 @@ test('a saved current week offers an explicit reload; party members see results 
   assert.match(pick.followUps[0].content,/^<@u1> <@u2>님이/);assert.deepEqual(pick.followUps[0].allowedMentions,{users:['u1']});
   const save=fake('button',{user:{id:'u2'},customId:pick.outputs[0].components[0].toJSON().components[0].custom_id});await handler(save);
   assert.match(save.outputs[0].content,/저장했어요/);assert.equal(save.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 2주차 (11/12~11/18)');
-  assert.deepEqual(save.outputs[0].components[1].toJSON().components.map(b=>b.label),['이번 주 다시 불러오기','다른 캐릭터'],'a party member cannot edit sizes');
+  assert.deepEqual(save.outputs[0].components.slice(1,3).map(r=>r.toJSON().components.map(b=>b.label)),[['지난주 저장'],['이번 주 다시 불러오기','다른 캐릭터']],'a party member cannot edit sizes');
   const sneak=fake('button',{user:{id:'u2'},customId:`mp:bhedit:${chars.u1.id}:2026-11-12`});await handler(sneak);assert.match(sneak.outputs[0].content,/본인만 보스 기록을 편집/);
   const calm=fake('select',{user:{id:'u2'},customId:`mp:bhpick:${chars.u1.id}`,values:['2026-11-12']});await handler(calm);
   assert.equal(calm.followUps.length,0);assert.equal(schedulerCalls(calls).length,1);
   advance(6*60_000);
-  const reload=fake('button',{user:{id:'u2'},customId:save.outputs[0].components[1].toJSON().components[0].custom_id});await handler(reload);
+  const reload=fake('button',{user:{id:'u2'},customId:save.outputs[0].components[2].toJSON().components[0].custom_id});await handler(reload);
   assert.match(reload.outputs[0].embeds[0].toJSON().title,/\(저장 전\)$/);assert.equal(reload.followUps.length,1);assert.equal(schedulerCalls(calls).length,2);
   const skip=fake('button',{user:{id:'u2'},customId:reload.outputs[0].components[0].toJSON().components[1].custom_id});await handler(skip);
   assert.equal(skip.outputs[0].content,'저장하지 않았어요.');
@@ -281,8 +281,8 @@ test('boss history is reached like 스펙 변화: roster button → character pi
   assert.equal(open.outputs[0].embeds[0].toJSON().title,'모찌 · 보스 히스토리');
   assert.match(open.followUps[0].content,/^<@u2> <@u1>님이 \*\*모찌\*\*의 보스 히스토리/);
   const rows=open.outputs[0].components.map(r=>r.toJSON().components.map(c=>c.label??c.custom_id));
-  assert.deepEqual(rows.slice(1),[['다른 캐릭터'],['보스방','캐릭터','파티']]);
-  const back=fake('button',{customId:open.outputs[0].components[1].toJSON().components[0].custom_id});await handler(back);
+  assert.deepEqual(rows.slice(1),[['이번 주 저장','지난주 저장'],['다른 캐릭터'],['보스방','캐릭터','파티']]);
+  const back=fake('button',{customId:open.outputs[0].components[2].toJSON().components[0].custom_id});await handler(back);
   assert.equal(back.outputs[0].components[0].toJSON().components[0].custom_id,'mp:selectbh');
   // Picking a character outside the viewer's parties is refused.
   const outsider=fake('select',{customId:'mp:selectbh',values:[chars.u3.id]});await handler(outsider);
@@ -297,4 +297,36 @@ test('preview and editor screens also carry the home navigation row',async t=>{
   const boss=fake('select',{customId:save.outputs[0].components[0].toJSON().components[0].custom_id,values:['0']});await handler(boss);
   assert.deepEqual(boss.outputs[0].components[1].toJSON().components.map(b=>b.label),['주차 편집으로 돌아가기','히스토리로 돌아가기']);
   assert.deepEqual(boss.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티']);
+});
+
+test('history save buttons save this week or last week directly and disappear once saved',async t=>{
+  const {handler,chars,calls,repository,advance}=await handlerFor(t);
+  const open=command('보스기록','히스토리',{'캐릭터':chars.u1.id});await handler(open);
+  const saves=open.outputs[0].components[1].toJSON().components;
+  assert.deepEqual(saves.map(b=>[b.label,b.custom_id]),[['이번 주 저장',`mp:bhquick:${chars.u1.id}:current`],['지난주 저장',`mp:bhquick:${chars.u1.id}:last`]]);
+  // A mid-day Wednesday snapshot is not final, so saving last week reads the final day once.
+  repository.db.prepare('INSERT INTO scheduler_snapshots VALUES(?,?,?,?,?,?)').run('g','t',chars.u1.id,'2026-11-11',Date.parse('2026-11-11T03:00:00Z'),JSON.stringify({date:'2026-11-11',bosses:[],weeklyBossCount:3,weeklyBossLimit:12}));
+  const last=fake('button',{customId:saves[1].custom_id});await handler(last);
+  assert.deepEqual(schedulerCalls(calls).map(c=>c.date),['2026-11-11']);
+  assert.match(last.outputs[0].content,/^11월 1주차 \(11\/5~11\/11\) 보스 기록을 저장했어요\.\n함께 클리어한 인원을/);
+  assert.equal(last.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 1주차 (11/5~11/11) 편집');
+  // This week: saved straight away; a second save within five minutes reuses the cache.
+  const current=fake('button',{customId:saves[0].custom_id});await handler(current);
+  assert.equal(schedulerCalls(calls).length,2);
+  const after=command('보스기록','히스토리',{'캐릭터':chars.u1.id});await handler(after);
+  const labels=after.outputs[0].components.map(r=>r.toJSON().components.map(c=>c.label??c.custom_id));
+  assert.ok(!labels.flat().some(l=>/저장$/.test(l)),'no save buttons once both weeks are saved');
+  assert.deepEqual(labels[1],['인원 편집','이번 주 다시 불러오기','다른 캐릭터']);
+  assert.ok(after.outputs[0].components[0].toJSON().components[0].options.every(o=>/저장됨/.test(o.description)));
+  advance(60_000);
+  assert.equal(schedulerCalls(calls).length,2,'opening the saved history never requests again');
+});
+test('a party member saving with the save button returns to the saved week and notifies the owner',async t=>{
+  const {handler,chars}=await handlerFor(t);
+  const save=fake('button',{user:{id:'u2'},customId:`mp:bhquick:${chars.u1.id}:last`});await handler(save);
+  assert.equal(save.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 1주차 (11/5~11/11)');
+  assert.match(save.outputs[0].content,/저장했어요/);
+  assert.match(save.followUps[0].content,/^<@u1> <@u2>님이/);
+  const outsider=fake('button',{user:{id:'u3'},customId:`mp:bhquick:${chars.u1.id}:current`});await handler(outsider);
+  assert.match(outsider.outputs[0].content,/같은 파티의 파티원/);
 });

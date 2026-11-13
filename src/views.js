@@ -222,12 +222,15 @@ export function bossHistory({character,options},prices,{selected=null,canEdit=fa
     const w=current.data;
     emb.setTitle(`${safe(character.name)} · ${weekLabel(w.week)}`).setDescription(`주간 보스 ${count(w.clearCount,w.clearLimit)} 클리어 · 1인 몫 합계 **${formatMeso(clearedValue(w.cleared,prices))}**`)
       .addFields({name:`클리어한 보스 ${w.cleared.length}개`,value:clearedLines(w.cleared,prices,true).join('\n').slice(0,1024)||'클리어 없음'});
-  } else emb.setTitle(`${safe(character.name)} · 보스 히스토리`).setDescription(savedCount?`저장한 주차 ${savedCount}개 · 아래에서 주차를 선택하세요.`:'저장한 기록이 없어요. 아래에서 이번 주 또는 지난주를 선택해 불러온 뒤 저장하세요.');
+  } else emb.setTitle(`${safe(character.name)} · 보스 히스토리`).setDescription(savedCount?`저장한 주차 ${savedCount}개 · 아래에서 주차를 선택하세요.`:'저장한 기록이 없어요. 아래 저장 버튼으로 이번 주·지난주 기록을 바로 저장하거나, 주차를 골라 먼저 확인하세요.');
   emb.setFooter({text:'결정석 금액은 현재 가격표 기준 · 저장한 주차는 다시 불러오지 않아요 · 인원은 등록자가 편집해요'});
   const list=paginate(options,page,25);
   const components=[row(new StringSelectMenuBuilder().setCustomId(`mp:bhpick:${character.id}`).setPlaceholder('주차 선택').addOptions(list.items.map(o=>({
     label:truncate(weekLabel(o.week)),value:o.week,default:o.week===selected,
     description:truncate(o.saved?`${o.period==='current'?'이번 주 · ':o.period==='last'?'지난주 · ':''}저장됨 · 클리어 ${o.data.cleared.length}개 · 1인 몫 ${formatMeso(clearedValue(o.data.cleared,prices))}`:`${o.period==='current'?'이번 주':'지난주'} · 저장 전 (선택하면 불러와요)`)}))))];
+  // Save buttons for this week / last week while they are not saved yet.
+  const unsaved=options.filter(o=>!o.saved&&o.period).sort((a,b)=>a.period==='current'?-1:1);
+  if(unsaved.length) components.push(row(...unsaved.map(o=>button(`mp:bhquick:${character.id}:${o.period}`,`${o.period==='current'?'이번 주':'지난주'} 저장`,ButtonStyle.Success))));
   const actions=[];
   if(current&&canEdit&&current.data.cleared.length) actions.push(button(`mp:bhedit:${character.id}:${current.week}`,'인원 편집',ButtonStyle.Primary));
   if(current?.period==='current') actions.push(button(`mp:bhreload:${character.id}:current`,'이번 주 다시 불러오기'));

@@ -262,6 +262,12 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
           ({payload,notice}=await pickWeek(ctx,id,week));
         }
         if(action==='bhshow') payload=historyView(ctx,id,{selected:a});
+        if(action==='bhquick') {
+          const r=need(records,'보스 기록'),{record,fetched}=await r.saveLatest(ctx,id,a==='last'?'last':'current'),done=`${view.weekLabel(record.week)} 보스 기록을 저장했어요.`;
+          if(record.ownerId===ctx.userId&&record.cleared.length) payload=view.bossWeekEditor(r.week(ctx,id,record.week),priceMap(ctx.guildId),`${done}\n함께 클리어한 인원을 고르면 결정석을 그 인원만큼 나눠요.`);
+          else payload=historyView(ctx,id,{selected:record.week,notice:done});
+          if(fetched) notice=bossNotice(record,`${view.weekLabel(record.week)} 보스 기록`);
+        }
         if(action==='bhpicker') payload=view.bossHistoryPicker(need(records,'보스 기록').viewableCharacters(ctx),Number(id));
         if(action==='selectbh') {const c=need(records,'보스 기록').access(ctx,selected);payload=historyView(ctx,selected);notice={owner:c.ownerId,name:c.name,what:'보스 히스토리'};}
         // Saving leads straight to the party-size editor for the owner; others return to the history.
