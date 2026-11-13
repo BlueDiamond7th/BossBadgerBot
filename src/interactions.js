@@ -1,11 +1,13 @@
-import { MessageFlags } from 'discord.js';
+import { MessageFlags, PermissionFlagsBits } from 'discord.js';
 import { contextFor, supportedChannel, eligibleOwners, requireEditable, visibleError } from './access.js';
 import { requireRule } from './errors.js';
 import { formatMeso } from './revenue.js';
 import { bossById } from './catalog.js';
 import * as view from './views.js';
+import { createScheduleInteractions } from './schedule-interactions.js';
 
-export function createHandler({service,guildId,tracker=null,connections=null,records=null,prices=null,distributions=null,onConnectionChanged=()=>{},verifyContext=contextFor,resolveOwners=eligibleOwners,refreshBoard=async()=>{}}) {
+export function createHandler({service,guildId,tracker=null,connections=null,records=null,prices=null,distributions=null,schedules=null,scheduleWorker=null,onConnectionChanged=()=>{},verifyContext=contextFor,resolveOwners=eligibleOwners,refreshBoard=async()=>{}}) {
+  const scheduleUI=schedules?createScheduleInteractions({schedules,resolveOwners}):null;
   const privatePanels=new Map();
   const priceMap=gid=>prices?.all(gid).prices??{};
   const need=(feature,label)=>{requireRule(feature,`${label} 기능을 사용할 수 없어요. 봇을 업데이트해 주세요.`);return feature;};
@@ -14,7 +16,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
   // Opening a modal must be the first response, so these checks use stored data only; submit rechecks membership.
   function quickContext(i) {
     requireRule(i.inGuild()&&i.guildId===guildId&&supportedChannel(i.channel),'설정한 서버의 일반 채널 또는 스레드에서 사용해 주세요.');
-    return {guildId:i.guildId,threadId:i.channel.id,userId:i.user.id};
+    return {guildId:i.guildId,threadId:i.channel.id,userId:i.user.id,isManager:i.memberPermissions?.has(i.channel.isThread()?PermissionFlagsBits.ManageThreads:PermissionFlagsBits.ManageChannels)??false};
   }
   // Viewing another member's boss records notifies that member.
   const bossNotice=(record,what)=>({owner:record.ownerId,name:record.characterName,what});
@@ -135,6 +137,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
     if(!i.isChatInputCommand()&&!i.isButton()&&!i.isStringSelectMenu()&&!i.isModalSubmit()&&!i.isUserSelectMenu?.()) return;
     let changed=false,notice=null,publicPost=null;
     try {
+      if(i.customId?.startsWith('sc:')&&scheduleUI&&await scheduleUI.modal(i,quickContext(i))) return;
       // Opening a blank modal reveals no saved data. Recheck live membership on submit.
       if(i.isButton()&&['mp:apikey','mp:create'].includes(i.customId)) {
         requireRule(i.inGuild()&&i.guildId===guildId&&supportedChannel(i.channel),'설정한 서버의 일반 채널 또는 스레드에서 사용해 주세요.');
@@ -155,11 +158,16 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
       else await i.deferReply({flags:MessageFlags.Ephemeral});
       const ctx=await verifyContext(i,guildId),rid=i.id;
       let payload;
-      if(i.isChatInputCommand()) {
+      if((i.isChatInputCommand()&&i.commandName==='일정')||i.customId?.startsWith('sc:')) {
+        requireRule(scheduleUI,'일정 기능을 사용할 수 없어요. 봇을 업데이트해 주세요.');
+        const result=await scheduleUI.handle(i,ctx);payload=result.payload;changed=result.changed;
+        if(changed&&scheduleWorker)await scheduleWorker.refresh(ctx);
+        if(changed&&result.scheduleId&&schedules.deliveryIssues(ctx,result.scheduleId).length)payload.content=`${payload.content??'일정 변경은 저장됐어요.'}\n공개 카드 또는 알림 전송을 확인하지 못했어요. 관리 메뉴에서 발송 상태를 확인해 주세요.`;
+      } else if(i.isChatInputCommand()) {
         const sub=i.options.getSubcommand(),get=n=>i.options.getString(n),pid=get('파티');
         if(i.commandName==='보스방') {
           if(sub==='시작') {service.start(ctx,rid);changed=true;}
-          payload=view.board(service.snapshot(ctx));
+          payload=view.board(service.snapshot(ctx),schedules?.list(ctx)??[]);
         } else if(i.commandName==='캐릭터') {
           if(sub==='연결'||sub==='등록') payload=connection(ctx);
           if(sub==='연결해제') payload=disconnect(ctx);
@@ -231,7 +239,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         if(action==='specpicker') payload=view.specPicker(service.snapshot(ctx),Number(id));
         if(action==='selectspec'||action==='spec') payload=specs(ctx,selected??id,Number(a)||0,Number(b)||0);
         if(action==='specsync') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');const result=await tracker.sync(ctx,id);changed=!result.cached;payload=specs(ctx,id);}
-        if(action==='board') {payload=view.board(service.snapshot(ctx));changed=true;}
+        if(action==='board') {payload=view.board(service.snapshot(ctx),schedules?.list(ctx)??[]);changed=true;}
         if(action==='roster') {
           const s=service.snapshot(ctx),page=Number(a),shown=view.paginate(s.characters.filter(c=>c.active&&(id==='all'||c.ownerId===id)),page,10).items;
           await getEligible(ctx,i,shown.map(c=>c.ownerId));payload=rosterView(ctx,s,page,id,ctx.eligibleOwnerIds);
@@ -320,6 +328,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
       if(publicPost) await i.followUp({...publicPost,allowedMentions:{parse:[]}});
       if(notice&&notice.owner!==ctx.userId) await i.followUp({content:`<@${notice.owner}> <@${ctx.userId}>님이 **${view.safe(notice.name)}**의 ${notice.what}을 조회했어요.`,allowedMentions:{users:[notice.owner]}}).catch(()=>console.warn('[notice] send-failed'));
       if(changed) {
+        if(scheduleWorker)await scheduleWorker.refresh(ctx);
         try {await refreshBoard(i,ctx);} catch(error) {
           console.warn('[board-refresh]',error.code??error.name);
           await i.followUp({content:'저장은 완료했지만 공용 관리판을 갱신하지 못했어요. 봇의 채널 권한을 확인하고 /보스방 시작을 다시 실행해 주세요.',flags:MessageFlags.Ephemeral,allowedMentions:{parse:[]}}).catch(()=>{});

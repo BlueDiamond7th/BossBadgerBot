@@ -6,6 +6,10 @@ const partyOption=s=>s.addStringOption(o=>o.setName('파티').setDescription('�
 const charOption=s=>s.addStringOption(o=>o.setName('캐릭터').setDescription('현재 스레드의 등록 캐릭터').setRequired(true).setAutocomplete(true));
 const bossOption=s=>s.addStringOption(o=>o.setName('보스').setDescription('보스 선택').setRequired(true).addChoices(...BOSSES.map(b=>({name:b.name,value:b.id}))));
 export const commands=[
+  root('일정','파티 출발 시간·투표·참석 여부를 관리해요')
+    .addSubcommand(s=>s.setName('목록').setDescription('현재 채널의 앞으로 7일 보스 일정을 봐요'))
+    .addSubcommand(s=>s.setName('내일정').setDescription('내가 포함된 일정과 참석 응답을 봐요'))
+    .addSubcommand(s=>partyOption(s.setName('생성').setDescription('시간을 바로 등록하거나 후보 시간을 투표해요'))),
   root('보스방','현재 스레드를 보스 관리 공간으로 사용해요')
     .addSubcommand(s=>s.setName('시작').setDescription('이 스레드에 캐릭터·파티 관리판을 만들어요'))
     .addSubcommand(s=>s.setName('현황').setDescription('현재 스레드의 등록 현황과 관리 버튼을 열어요')),

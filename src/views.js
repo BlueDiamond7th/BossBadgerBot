@@ -17,12 +17,13 @@ export function paginate(items,page=0,size=15) {
 }
 // Direction suffixes keep page controls distinct from home links to the same page.
 const pager=(prefix,page,pages)=>row(button(`${prefix}:${page-1}:prev`,'이전',ButtonStyle.Secondary,page===0),button(`${prefix}:${page+1}:next`,'다음',ButtonStyle.Secondary,page>=pages-1));
-export function board(state) {
+export function board(state,schedules=[]) {
   const count=state.characters.filter(c=>c.active).length, parties=state.parties.filter(p=>!p.archived);
   return {embeds:[base().setTitle('🍁 우리들의 보스방').setDescription('내 API 키로 캐릭터를 불러오고, 목록에서 골라 파티를 만들어 보세요.\n이 채널 또는 스레드 안에서 여러 파티와 파티별 보스를 관리해요.').addFields(
     {name:'등록 캐릭터',value:`${count}개`,inline:true},{name:'활성 파티',value:`${parties.length}개`,inline:true},
-    {name:'파티 미리보기',value:parties.slice(0,6).map(p=>`• ${safe(p.name)} · ${p.characterIds.length}명 · 보스 ${p.bosses.length}개`).join('\n')||'아직 파티가 없어요. 파티 만들기부터 시작하세요.'}
-  ).setFooter({text:'캐릭터 수 제한 없음 · API 연결은 본인만 · 편성은 파티 생성자/관리자'})],components:[row(button('mp:register','내 API 키 연결',ButtonStyle.Primary),button('mp:roster:all:0','캐릭터 목록'),button('mp:create','파티 만들기',ButtonStyle.Primary)),row(button('mp:parties:active:0','파티 목록'),button('mp:parties:archived:0','보관함'),button('mp:board','새로고침'))],allowedMentions:{parse:[]}};
+    {name:'파티 미리보기',value:parties.slice(0,6).map(p=>`• ${safe(p.name)} · ${p.characterIds.length}명 · 보스 ${p.bosses.length}개`).join('\n')||'아직 파티가 없어요. 파티 만들기부터 시작하세요.'},
+    {name:'다음 보스 일정',value:schedules.slice(0,3).map(s=>`• ${safe(s.partyName)} · ${new Date(s.startAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',month:'2-digit',day:'2-digit',weekday:'short',hour:'2-digit',minute:'2-digit',hour12:false})}${s.status==='poll'?' · 투표 중':''}`).join('\n').slice(0,1000)||'등록된 일정이 없어요. 파티 정보에서 일정 잡기를 눌러 주세요.'}
+  ).setFooter({text:'캐릭터 수 제한 없음 · API 연결은 본인만 · 편성은 파티 생성자/관리자'})],components:[row(button('mp:register','내 API 키 연결',ButtonStyle.Primary),button('mp:roster:all:0','캐릭터 목록'),button('mp:create','파티 만들기',ButtonStyle.Primary)),row(button('mp:parties:active:0','파티 목록'),button('mp:parties:archived:0','보관함'),button('mp:board','새로고침'),button('sc:list:0','일정 목록'),button('sc:mine:0','내 일정'))],allowedMentions:{parse:[]}};
 }
 export const scouterUrl=name=>`https://maplescouter.com/ko/info?name=${encodeURIComponent(name)}`;
 const power=value=>{
@@ -69,6 +70,7 @@ export function partyDetail(state,p,ctx,warnings=[],prices=null) {
   const components=[];const token=`${p.id}:0:${p.version}`;
   if(canEdit&&!p.archived) components.push(row(button(`mp:addmember:${token}`,'캐릭터 추가',ButtonStyle.Primary),button(`mp:delmember:${token}`,'캐릭터 제외'),button(`mp:addboss:${token}`,'보스 추가',ButtonStyle.Primary),button(`mp:delboss:${token}`,'보스 제외')));
   const secondary=[button(`mp:copy:${p.id}`,'구성 복사')];
+  if(!p.archived) secondary.push(button(`sc:start:${p.id}`,'일정 잡기'));
   if(!p.archived) secondary.push(button(`mp:dist:${p.id}`,'분배금 계산'));
   if(canEdit) secondary.push(button(`mp:archive:${p.id}:${p.version}:${p.archived?'restore':'store'}`,p.archived?'복원':'보관'));
   secondary.push(button(`mp:detail:${p.id}`,'새로고침'));
