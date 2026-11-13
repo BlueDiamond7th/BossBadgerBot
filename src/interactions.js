@@ -262,6 +262,8 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
           ({payload,notice}=await pickWeek(ctx,id,week));
         }
         if(action==='bhshow') payload=historyView(ctx,id,{selected:a});
+        if(action==='bhpicker') payload=view.bossHistoryPicker(need(records,'보스 기록').viewableCharacters(ctx),Number(id));
+        if(action==='selectbh') {const c=need(records,'보스 기록').access(ctx,selected);payload=historyView(ctx,selected);notice={owner:c.ownerId,name:c.name,what:'보스 히스토리'};}
         // Saving leads straight to the party-size editor for the owner; others return to the history.
         if(action==='bhsave') {
           const r=need(records,'보스 기록'),record=r.save(ctx,id,a,Number(b)),done='보스 기록을 저장했어요. 같은 주차는 마지막으로 저장한 기록으로 바뀌어요.';

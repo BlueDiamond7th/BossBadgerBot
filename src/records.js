@@ -87,6 +87,13 @@ export class BossRecords {
     const c=this.access(ctx,characterId);
     return {character:c,weeks:this.db.prepare('SELECT * FROM boss_history WHERE guild_id=? AND thread_id=? AND character_id=? ORDER BY week DESC').all(ctx.guildId,ctx.threadId,characterId).map(r=>({...JSON.parse(r.data_json),week:r.week,savedBy:r.saved_by,savedAt:r.saved_at}))};
   }
+  // Characters whose boss history this viewer may open: their own and those of party members.
+  viewableCharacters(ctx) {
+    const s=this.service.snapshot(ctx),owner=id=>s.characters.find(c=>c.id===id)?.ownerId;
+    const shared=new Set(s.parties.filter(p=>!p.archived&&p.characterIds.some(id=>owner(id)===ctx.userId)).flatMap(p=>p.characterIds));
+    const list=s.characters.filter(c=>c.active&&(c.ownerId===ctx.userId||shared.has(c.id)));
+    return [...list.filter(c=>c.ownerId===ctx.userId),...list.filter(c=>c.ownerId!==ctx.userId)];
+  }
   periodOf(week) {
     const thisWeek=weekStart(this.now());
     return week===thisWeek?'current':week===addDays(thisWeek,-7)?'last':null;

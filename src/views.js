@@ -40,7 +40,7 @@ const power=value=>{
 export function roster(state,page=0,owner='all',eligibleOwnerIds=null,powers=null) {
   const chars=state.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner));const view=paginate(chars,page,10);
   const lines=view.items.map(c=>`[**${safe(c.name)}**](${scouterUrl(c.name)}) · ${safe(c.world??'월드 미확인')} - <@${c.ownerId}>${eligibleOwnerIds&&!eligibleOwnerIds.has(c.ownerId)?' · ⚠️ 현재 참가자 아님':''}\n${safe(c.job??'직업 미확인')} / 전투력 : ${power(powers?.get(c.id))}`);
-  return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(lines.join('\n\n')||'등록된 캐릭터가 없어요. 내 API 키 연결을 눌러 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개 · 기존 수동 등록과 API로 불러온 캐릭터가 함께 표시돼요.`})],components:[pager(`mp:roster:${owner}`,view.page,view.pages),row(button('mp:register','캐릭터 추가 / 삭제',ButtonStyle.Primary),button('mp:specpicker:0','스펙 변화'),button('mp:schedulerpicker:0','내 스케줄러')),home()],allowedMentions:{parse:[]}};
+  return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(lines.join('\n\n')||'등록된 캐릭터가 없어요. 내 API 키 연결을 눌러 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개 · 기존 수동 등록과 API로 불러온 캐릭터가 함께 표시돼요.`})],components:[pager(`mp:roster:${owner}`,view.page,view.pages),row(button('mp:register','캐릭터 추가 / 삭제',ButtonStyle.Primary),button('mp:specpicker:0','스펙 변화'),button('mp:bhpicker:0','보스 히스토리'),button('mp:schedulerpicker:0','내 스케줄러')),home()],allowedMentions:{parse:[]}};
 }
 export function partyList(state,page=0,archived=false) {
   const view=paginate(state.parties.filter(p=>p.archived===archived),page);
@@ -112,6 +112,13 @@ export function specPicker(state,page=0) {
   if(list.items.length) components.push(row(new StringSelectMenuBuilder().setCustomId('mp:selectspec').setPlaceholder('스펙을 볼 캐릭터').addOptions(list.items.map(c=>({label:truncate(c.name),value:c.id})))));
   components.push(pager('mp:specpicker',list.page,list.pages),home());
   return {content:'장비·스킬·전투력·레벨 변화를 볼 캐릭터를 선택하세요.',embeds:[],components};
+}
+// Same entry pattern as 스펙 변화: pick a character, then open its boss history.
+export function bossHistoryPicker(characters,page=0) {
+  const list=paginate(characters,page,25),components=[];
+  if(list.items.length) components.push(row(new StringSelectMenuBuilder().setCustomId('mp:selectbh').setPlaceholder('보스 히스토리를 볼 캐릭터').addOptions(list.items.map(c=>({label:truncate(c.name),value:c.id,description:truncate(`${c.world??'월드 미확인'} · ${c.job??'직업 미확인'}`)})))));
+  components.push(pager('mp:bhpicker',list.page,list.pages),home());
+  return {content:list.items.length?'보스 히스토리를 볼 캐릭터를 선택하세요. 내 캐릭터와 같은 파티원의 캐릭터만 볼 수 있어요.':'볼 수 있는 캐릭터가 없어요. 캐릭터를 등록하거나 파티에 편성해 주세요.',embeds:[],components,allowedMentions:{parse:[]}};
 }
 const stamp=time=>new Date(time).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',hour12:false});
 export function specDetail(character,history,manual,ctx,index=0,page=0) {
@@ -199,7 +206,7 @@ export function bossRecord(record,prices,{fetched=false,refreshed=null}={}) {
     .addFields({name:`클리어한 보스 ${record.cleared.length}개`,value:clearedLines(record.cleared,prices).join('\n').slice(0,1024)||'클리어한 보스가 없어요.'})
     .setFooter({text:'Data based on NEXON Open API · 갱신은 등록자의 API 키로 다시 조회해요.'});
   const content=`${refreshed==='cached'?'최근에 수집한 기록이라 다시 조회하지 않았어요. ':''}이 주차 기록을 히스토리에 저장할까요? 저장하면 함께 클리어한 인원을 편집할 수 있어요.`;
-  return {content,embeds:[emb],components:[row(button(`mp:bhsave:${record.characterId}:${record.day}:${record.collectedAt}`,'저장',ButtonStyle.Primary),button(`mp:bhskip:${record.characterId}`,'저장 안 함'),button(`mp:bhrefresh:${record.characterId}:${record.period??'current'}`,'갱신'),button(`mp:bhist:${record.characterId}:0`,'히스토리로'))],allowedMentions:{parse:[]}};
+  return {content,embeds:[emb],components:[row(button(`mp:bhsave:${record.characterId}:${record.day}:${record.collectedAt}`,'저장',ButtonStyle.Primary),button(`mp:bhskip:${record.characterId}`,'저장 안 함'),button(`mp:bhrefresh:${record.characterId}:${record.period??'current'}`,'갱신'),button(`mp:bhist:${record.characterId}:0`,'히스토리로')),home()],allowedMentions:{parse:[]}};
 }
 // "11월 2주차 (11/12~11/18)": weeks start on the Thursday reset; n counts that month's Thursdays.
 export function weekLabel(week) {
@@ -223,9 +230,11 @@ export function bossHistory({character,options},prices,{selected=null,canEdit=fa
     description:truncate(o.saved?`${o.period==='current'?'이번 주 · ':o.period==='last'?'지난주 · ':''}저장됨 · 클리어 ${o.data.cleared.length}개 · 1인 몫 ${formatMeso(clearedValue(o.data.cleared,prices))}`:`${o.period==='current'?'이번 주':'지난주'} · 저장 전 (선택하면 불러와요)`)}))))];
   const actions=[];
   if(current&&canEdit&&current.data.cleared.length) actions.push(button(`mp:bhedit:${character.id}:${current.week}`,'인원 편집',ButtonStyle.Primary));
-  if(current?.period==='current') actions.push(button(`mp:bhreload:${character.id}:current`,'이번 주 최신 기록 다시 불러오기'));
-  if(actions.length) components.push(row(...actions));
+  if(current?.period==='current') actions.push(button(`mp:bhreload:${character.id}:current`,'이번 주 다시 불러오기'));
+  actions.push(button('mp:bhpicker:0','다른 캐릭터'));
+  components.push(row(...actions));
   if(list.pages>1) components.push(pager(`mp:bhist:${character.id}`,list.page,list.pages));
+  components.push(home());
   return {content:notice,embeds:[emb],components,allowedMentions:{parse:[]}};
 }
 // Week editor: pick one cleared boss, then pick how many people shared it.
@@ -233,12 +242,12 @@ export function bossWeekEditor({character,week:w},prices,notice=null) {
   const emb=base().setTitle(`${safe(character.name)} · ${weekLabel(w.week)} 편집`).setDescription(`${clearedLines(w.cleared,prices,true).join('\n').slice(0,3800)}\n\n**1인 몫 합계 ${formatMeso(clearedValue(w.cleared,prices))}**`)
     .setFooter({text:'보스를 고르고 함께 클리어한 인원을 선택하면 결정석 가격을 그 인원만큼 나눠요.'});
   const options=w.cleared.slice(0,25).map((b,i)=>({label:truncate(`${i+1}. ${b.difficulty} ${b.name}`),value:String(i),description:truncate(`${b.partySize??1}인 · 최대 ${entryLimit(b)}인${entryPrice(b,prices)?` · 1인 ${formatMeso(entryShare(b,prices))}`:' · 가격 없음'}`)}));
-  return {content:notice,embeds:[emb],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:bhboss:${character.id}:${w.week}:${w.rev??0}`).setPlaceholder('인원을 바꿀 보스 선택').addOptions(options)),row(button(`mp:bhshow:${character.id}:${w.week}`,'히스토리로 돌아가기'))],allowedMentions:{parse:[]}};
+  return {content:notice,embeds:[emb],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:bhboss:${character.id}:${w.week}:${w.rev??0}`).setPlaceholder('인원을 바꿀 보스 선택').addOptions(options)),row(button(`mp:bhshow:${character.id}:${w.week}`,'히스토리로 돌아가기')),home()],allowedMentions:{parse:[]}};
 }
 export function partySizePicker({character,week:w},index,prices) {
   const b=w.cleared[index],price=entryPrice(b,prices),limit=entryLimit(b);
   const options=Array.from({length:limit},(_,n)=>n+1).map(n=>({label:`${n}인${n===1?' (솔플)':''}`,value:String(n),default:(b.partySize??1)===n,description:price?truncate(`1인 ${formatMeso(Math.floor(price/n))}`):'가격 없음'}));
-  return {content:`**${safe(b.difficulty)} ${safe(b.name)}** · 함께 클리어한 인원을 선택하세요. (최대 ${limit}인)`,embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:bhsize:${character.id}:${w.week}:${w.rev??0}:${index}`).setPlaceholder('인원 선택').addOptions(options)),row(button(`mp:bhedit:${character.id}:${w.week}`,'주차 편집으로 돌아가기'))],allowedMentions:{parse:[]}};
+  return {content:`**${safe(b.difficulty)} ${safe(b.name)}** · 함께 클리어한 인원을 선택하세요. (최대 ${limit}인)`,embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:bhsize:${character.id}:${w.week}:${w.rev??0}:${index}`).setPlaceholder('인원 선택').addOptions(options)),row(button(`mp:bhedit:${character.id}:${w.week}`,'주차 편집으로 돌아가기'),button(`mp:bhshow:${character.id}:${w.week}`,'히스토리로 돌아가기')),home()],allowedMentions:{parse:[]}};
 }
 
 // ---- 분배금 ----
