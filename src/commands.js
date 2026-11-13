@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, InteractionContextType, ApplicationIntegrationType } from 'discord.js';
-import { BOSSES } from './catalog.js';
+import { BOSSES, DIFFICULTIES } from './catalog.js';
 
 const root=(name,description)=>new SlashCommandBuilder().setName(name).setDescription(description).setContexts(InteractionContextType.Guild).setIntegrationTypes(ApplicationIntegrationType.GuildInstall);
 const partyOption=s=>s.addStringOption(o=>o.setName('파티').setDescription('현재 스레드의 파티').setRequired(true).setAutocomplete(true));
@@ -34,13 +34,25 @@ export const commands=[
     .addSubcommand(s=>charOption(partyOption(s.setName('캐릭터추가').setDescription('스레드의 등록 캐릭터를 편성해요'))))
     .addSubcommand(s=>charOption(partyOption(s.setName('캐릭터제외').setDescription('편성한 캐릭터를 파티에서 제외해요'))))
     .addSubcommand(s=>bossOption(partyOption(s.setName('보스추가').setDescription('파티에 보스와 난이도를 등록해요')))
-      .addStringOption(o=>o.setName('난이도').setDescription('보스 난이도').setRequired(true).addChoices(...['이지','노말','하드','카오스','익스트림'].map(x=>({name:x,value:x})))))
+      .addStringOption(o=>o.setName('난이도').setDescription('보스 난이도').setRequired(true).addChoices(...DIFFICULTIES.map(x=>({name:x,value:x})))))
     .addSubcommand(s=>bossOption(partyOption(s.setName('보스제외').setDescription('파티의 등록 보스를 제외해요'))))
     .addSubcommand(s=>partyOption(s.setName('복사').setDescription('구성과 보스를 복사해 내 파티를 만들어요'))
       .addStringOption(o=>o.setName('이름').setDescription('복사한 파티 이름').setMaxLength(60)))
     .addSubcommand(s=>partyOption(s.setName('이름변경').setDescription('파티 이름을 바꿔요'))
       .addStringOption(o=>o.setName('이름').setDescription('새 이름').setMaxLength(60).setRequired(true)))
     .addSubcommand(s=>partyOption(s.setName('보관').setDescription('파티를 보관함으로 옮겨요. 복원할 수 있어요.')))
-    .addSubcommand(s=>partyOption(s.setName('복원').setDescription('보관한 파티를 다시 활성화해요')))
+    .addSubcommand(s=>partyOption(s.setName('복원').setDescription('보관한 파티를 다시 활성화해요'))),
+  root('보스기록','스케줄러 캐시로 주간 보스 클리어 기록을 보고 저장해요')
+    .addSubcommand(s=>charOption(s.setName('조회').setDescription('파티원 캐릭터의 이번 주·지난주 보스 기록을 봐요 (캐시 우선)'))
+      .addStringOption(o=>o.setName('주차').setDescription('조회할 주차 (기본: 이번 주)').addChoices({name:'이번 주',value:'current'},{name:'지난주',value:'last'})))
+    .addSubcommand(s=>charOption(s.setName('히스토리').setDescription('저장한 주차별 보스 기록을 봐요'))),
+  root('결정석','보스 결정석 가격표를 보고 수정해요')
+    .addSubcommand(s=>s.setName('가격표').setDescription('현재 서버의 결정석 가격표를 봐요'))
+    .addSubcommand(s=>bossOption(s.setName('가격수정').setDescription('보스 결정석 가격을 수정해요'))
+      .addStringOption(o=>o.setName('난이도').setDescription('보스 난이도').setRequired(true).addChoices(...DIFFICULTIES.map(x=>({name:x,value:x}))))
+      .addStringOption(o=>o.setName('가격').setDescription('예: 4억 6500만 또는 465000000').setRequired(true).setMaxLength(30))),
+  root('분배','파티 분배금을 계산하고 기록해요')
+    .addSubcommand(s=>partyOption(s.setName('시작').setDescription('분배할 아이템이 있는지 묻고 분배금을 계산해요')))
+    .addSubcommand(s=>partyOption(s.setName('목록').setDescription('파티의 분배 기록을 봐요')))
 ];
 export const commandJSON=()=>commands.map(command=>command.toJSON());

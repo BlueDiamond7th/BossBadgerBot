@@ -1,6 +1,8 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown } from 'discord.js';
 import { specChanges } from './specs.js';
-import { BOSSES, bossById } from './catalog.js';
+import { BOSSES, bossById, priceKey, partyLimit } from './catalog.js';
+import { formatMeso, partyRevenue, pricedBosses, distribution } from './revenue.js';
+import { clearedValue } from './records.js';
 
 export const safe=value=>escapeMarkdown(String(value)).replace(/@/g,'＠');
 export const button=(id,label,style=ButtonStyle.Secondary,disabled=false)=>new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style).setDisabled(disabled);
@@ -35,7 +37,7 @@ export function partyList(state,page=0,archived=false) {
   components.push(home());
   return {embeds:[base().setTitle(archived?'파티 보관함':'우리 보스방의 파티').setDescription(view.items.map(p=>`**${safe(p.name)}**\n${p.characterIds.length}명 · 보스 ${p.bosses.length}개 · 만든 사람 <@${p.creatorId}>`).join('\n\n')||'아직 파티가 없어요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개`})],components,allowedMentions:{parse:[]}};
 }
-export function partyDetail(state,p,ctx,warnings=[]) {
+export function partyDetail(state,p,ctx,warnings=[],prices=null) {
   const chars=p.characterIds.map(id=>state.characters.find(c=>c.id===id)).filter(Boolean);
   const canEdit=ctx.isManager||p.creatorId===ctx.userId;
   const emb=base().setTitle(`${p.archived?'📦':'⚔️'} ${safe(p.name)}`).setDescription(`만든 사람 <@${p.creatorId}> · ${chars.length}명${p.archived?' · 보관됨':''}`).addFields(
@@ -44,9 +46,16 @@ export function partyDetail(state,p,ctx,warnings=[]) {
   ).setFooter({text:`구성 버전 ${p.version} · 캐릭터·보스 변경은 이 파티에만 반영돼요.`});
   if(chars.length>12) emb.addFields({name:'전체 구성원',value:`총 ${chars.length}명 중 12명을 표시했어요. 캐릭터 목록이나 제외 메뉴에서 나머지를 확인하세요.`});
   if(warnings.length) emb.addFields({name:'편성 확인',value:warnings.slice(0,3).map(safe).join('\n').slice(0,1000)});
+  if(prices&&p.bosses.length) {
+    const r=partyRevenue(p,prices);
+    const lines=r.lines.map(x=>x.price?`• ${safe(x.difficulty)} ${safe(x.boss.name)}: ${formatMeso(x.share)} (${formatMeso(x.price)} ÷ ${x.divisor}명${x.boss.monthly?' · 월간':''})`:`• ${safe(x.difficulty)} ${safe(x.boss?.name??'알 수 없는 보스')}: 솔플 가정 · 가격 없음`);
+    lines.push(`**주간 합계 ${formatMeso(r.weekly)}**${r.monthly?` · 월간 ${formatMeso(r.monthly)}`:''}`);
+    emb.addFields({name:'결정석 수익 · 1인 기준',value:lines.join('\n').slice(0,1024)});
+  }
   const components=[];const token=`${p.id}:0:${p.version}`;
   if(canEdit&&!p.archived) components.push(row(button(`mp:addmember:${token}`,'캐릭터 추가',ButtonStyle.Primary),button(`mp:delmember:${token}`,'캐릭터 제외'),button(`mp:addboss:${token}`,'보스 추가',ButtonStyle.Primary),button(`mp:delboss:${token}`,'보스 제외')));
   const secondary=[button(`mp:copy:${p.id}`,'구성 복사')];
+  if(!p.archived) secondary.push(button(`mp:dist:${p.id}`,'분배금 계산'));
   if(canEdit) secondary.push(button(`mp:archive:${p.id}:${p.version}:${p.archived?'restore':'store'}`,p.archived?'복원':'보관'));
   secondary.push(button(`mp:detail:${p.id}`,'새로고침'));
   components.push(row(...secondary),home());
@@ -144,3 +153,77 @@ export function schedulerDetail(character,history,index=0,page=0) {
   emb.setFooter({text:'Data based on NEXON Open API · 최근 14일 · 날짜별 마지막 수집 상태'});
   return {embeds:[emb],components:[row(button(`mp:scheduler:${character.id}:${records.page-1}:0`,'최근 날짜',ButtonStyle.Secondary,records.page===0),button(`mp:scheduler:${character.id}:${records.page+1}:0`,'이전 날짜',ButtonStyle.Secondary,records.page>=records.pages-1)),row(button(`mp:scheduler:${character.id}:${records.page}:${list.page-1}`,'이전 항목',ButtonStyle.Secondary,list.page===0),button(`mp:scheduler:${character.id}:${records.page}:${list.page+1}`,'다음 항목',ButtonStyle.Secondary,list.page>=list.pages-1),button(`mp:schedulersync:${character.id}`,'스케줄러 갱신',ButtonStyle.Primary)),home()],allowedMentions:{parse:[]}};
 }
+
+// ---- 결정석 가격표 ----
+export function priceTable({prices,overrides}) {
+  const lines=pricedBosses().map(b=>`**${safe(b.name)}** (최대 ${b.maxParty}인${b.monthly?' · 월간':''})\n${b.priced.map(d=>`${d}${partyLimit(b,d)!==b.maxParty?`(${partyLimit(b,d)}인)`:''} ${formatMeso(prices[priceKey(b.id,d)])}${overrides.has(priceKey(b.id,d))?' ✏️':''}`).join(' · ')}`);
+  const emb=base().setTitle('결정석 가격표').setFooter({text:'✏️ 서버에서 수정한 가격 · /결정석 가격수정 보스 난이도 가격 · 노말 진 힐라 이하는 솔플 가정'});
+  const half=Math.ceil(lines.length/2);
+  emb.addFields({name:'보스 1',value:lines.slice(0,half).join('\n').slice(0,1024)},{name:'보스 2',value:lines.slice(half).join('\n').slice(0,1024)});
+  return {embeds:[emb],components:[home()],allowedMentions:{parse:[]}};
+}
+
+// ---- 보스 기록 ----
+const clearedLines=(cleared,prices)=>cleared.map(b=>`• ${safe(b.difficulty)} ${safe(b.name)}${b.monthly?' (월간)':''}${b.bossId&&prices[priceKey(b.bossId,b.difficulty)]?` · ${formatMeso(prices[priceKey(b.bossId,b.difficulty)])}`:''}`);
+const count=(n,limit)=>`${n??'?'}/${limit??'?'}`;
+// Cached record with yes/no save buttons and an explicit API refresh button.
+export function bossRecord(record,prices,{fetched=false,refreshed=null}={}) {
+  const source=fetched?'방금 API에서 불러왔어요.':`${stamp(record.collectedAt)}에 수집한 캐시예요.${record.final?' (지난 날짜 확정 기록)':''}`;
+  const emb=base().setTitle(`${safe(record.characterName)} · ${record.week} 주차 보스 기록`).setDescription(`${record.day} 기준 · 주간 보스 ${count(record.clearCount,record.clearLimit)} 클리어\n결정석 가격 합계(분배 전) **${formatMeso(clearedValue(record.cleared,prices))}**\n${source}`)
+    .addFields({name:`클리어한 보스 ${record.cleared.length}개`,value:clearedLines(record.cleared,prices).join('\n').slice(0,1024)||'클리어한 보스가 없어요.'})
+    .setFooter({text:'Data based on NEXON Open API · 갱신은 등록자의 API 키로 다시 조회해요.'});
+  const content=refreshed==='cached'?'최근에 수집한 기록이라 다시 조회하지 않았어요. 이 기록을 저장할까요?':'불러온 보스 기록을 저장할까요?';
+  return {content,embeds:[emb],components:[row(button(`mp:bhsave:${record.characterId}:${record.day}:${record.collectedAt}`,'예',ButtonStyle.Primary),button(`mp:bhskip:${record.characterId}`,'아니오'),button(`mp:bhrefresh:${record.characterId}:${record.period??'current'}`,'갱신'))],allowedMentions:{parse:[]}};
+}
+export function bossSaved(record,prices) {
+  return {...bossRecord(record,prices),content:'보스 기록을 저장했어요. 같은 주차는 마지막으로 저장한 기록으로 바뀌어요.',components:[row(button(`mp:bhist:${record.characterId}:0`,'히스토리 보기'))]};
+}
+export function bossSkipped(characterId) {
+  return {content:'저장하지 않았어요.',embeds:[],components:[row(button(`mp:bhist:${characterId}:0`,'히스토리 보기'))],allowedMentions:{parse:[]}};
+}
+export function bossHistory({character,weeks},page,prices) {
+  const view=paginate(weeks,page,4);
+  const emb=base().setTitle(`${safe(character.name)} · 보스 히스토리`).setDescription(view.total?`저장한 주차 ${view.total}개 · 최신순`:'저장한 기록이 없어요. /보스기록 조회 후 저장해 주세요.');
+  for(const w of view.items) emb.addFields({name:`${w.week} 주차 · ${count(w.clearCount,w.clearLimit)} · ${formatMeso(clearedValue(w.cleared,prices))}`,value:clearedLines(w.cleared,prices).join('\n').slice(0,1024)||'클리어 없음'});
+  emb.setFooter({text:`${view.page+1}/${view.pages} 페이지 · 결정석 금액은 현재 가격표 기준, 분배 전`});
+  return {embeds:[emb],components:[pager(`mp:bhist:${character.id}`,view.page,view.pages)],allowedMentions:{parse:[]}};
+}
+
+// ---- 분배금 ----
+export function distQuestion(p) {
+  return {content:`**${safe(p.name)}** · 분배할 아이템이 있나요?`,embeds:[],components:[row(button(`mp:distyes:${p.id}`,'예',ButtonStyle.Primary),button(`mp:distno:${p.id}`,'아니오')),row(button(`mp:distlist:${p.id}:0`,'분배 기록'),button(`mp:detail:${p.id}`,'파티로 돌아가기'))],allowedMentions:{parse:[]}};
+}
+export function distSellerPicker(p) {
+  return {content:`**${safe(p.name)}** · 판매자를 선택하세요. 파티에 캐릭터가 편성된 사람만 선택할 수 있어요.`,embeds:[],components:[row(new UserSelectMenuBuilder().setCustomId(`mp:distseller:${p.id}`).setPlaceholder('판매자 @선택').setMinValues(1).setMaxValues(1)),row(button(`mp:detail:${p.id}`,'취소'))],allowedMentions:{parse:[]}};
+}
+export function distModal(customId,record=null) {
+  const modal=new ModalBuilder().setCustomId(customId).setTitle(record?'분배 기록 수정':'분배 품목 입력').addComponents(
+    row(new TextInputBuilder().setCustomId('item').setLabel('거래 품목').setPlaceholder('예: 미트라의 분노').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(60)),
+    row(new TextInputBuilder().setCustomId('price').setLabel('거래금 (경매장 판매 금액)').setPlaceholder('예: 25억 또는 2500000000').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(30)));
+  // Prefill only when editing; Discord rejects empty prefilled values.
+  if(record) {
+    const [item,price]=modal.components.map(r=>r.components[0]);item.setValue(record.item);price.setValue(String(record.price));
+    modal.addComponents(row(new TextInputBuilder().setCustomId('members').setLabel('파티원 수 n (판매자 포함)').setPlaceholder('1~6').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(2).setValue(String(record.memberCount))));
+  }
+  return modal;
+}
+export function distCard(record) {
+  const r=distribution(record.price,record.memberCount);
+  const lines=[`판매자 닉네임 : <@${record.sellerId}>`,'',`거래 품목 : ${safe(record.item)} 거래금 - ${formatMeso(r.price)}`,'',`판매자 실수령액 - ${formatMeso(r.net)}`];
+  if(record.mvp) lines.push(`MVP 할인가 - ${formatMeso(r.mvpNet)}`);
+  lines.push('',`최종 수령 금액 (${r.memberCount}명 기준) - ${formatMeso(r.share)}`);
+  if(record.mvp) lines.push(`MVP 할인가 - ${formatMeso(r.mvpShare)}`);
+  const formulas=['판매자 실수령액 = 거래금 × 0.95',`최종 수령 금액 = 실수령액 ÷ ${r.memberCount} × 0.95`];
+  if(record.mvp) formulas.push('MVP 실수령액 = 거래금 × 0.97',`MVP 최종 수령 금액 = MVP 실수령액 ÷ ${r.memberCount} × 0.97`);
+  const emb=base().setTitle(`분배금 계산 결과 · ${safe(record.partyName)}`).setDescription(lines.join('\n'))
+    .addFields({name:'계산식',value:formulas.join('\n')})
+    .setFooter({text:`n = 파티원 수 ${r.memberCount}명 (판매자 포함)${record.edits?` · 수정 ${record.edits}회`:''} · 품목·거래금·파티원 수 수정은 판매자만`});
+  return {embeds:[emb],components:[row(button(`mp:distedit:${record.id}`,'수정'),button(`mp:distmvp:${record.id}`,record.mvp?'MVP 할인 해제':'MVP 할인 적용',record.mvp?ButtonStyle.Success:ButtonStyle.Secondary))],allowedMentions:{parse:[]}};
+}
+export function distList(p,records,page=0) {
+  const view=paginate(records,page,10),components=[];
+  if(view.items.length) components.push(row(new StringSelectMenuBuilder().setCustomId('mp:distopen').setPlaceholder('분배 기록 열기').addOptions(view.items.map(r=>({label:truncate(`${r.item} · ${formatMeso(r.price)}`),value:r.id,description:truncate(new Date(r.createdAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',hour12:false}))})))));
+  components.push(pager(`mp:distlist:${p.id}`,view.page,view.pages),row(button(`mp:dist:${p.id}`,'새 분배',ButtonStyle.Primary),button(`mp:detail:${p.id}`,'파티로 돌아가기')));
+  return {embeds:[base().setTitle(`${safe(p.name)} · 분배 기록`).setDescription(view.items.map(r=>`**${safe(r.item)}** · ${formatMeso(r.price)} · 판매자 <@${r.sellerId}>${r.mvp?' · MVP':''}`).join('\n')||'분배 기록이 없어요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}건`})],components,allowedMentions:{parse:[]}};
+}
+export const backToParty=id=>row(button(`mp:detail:${id}`,'파티로 돌아가기'));
