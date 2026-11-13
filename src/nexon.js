@@ -46,9 +46,12 @@ export class NexonClient {
     }
     return result;
   }
-  async scheduler(ocid) {
-    const body=await this.request('scheduler/character-state',{ocid});
-    requireRule(typeof body.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(body.date)&&body.character_name,'스케줄러 정보가 없어요. 게임 접속 및 API 제공 상태를 확인해 주세요.','NEXON_NO_SCHEDULER');
+  // date (YYYY-MM-DD, KST) reads a past day; the API keeps about 14 days.
+  async scheduler(ocid,date=null) {
+    const body=await this.request('scheduler/character-state',date?{ocid,date}:{ocid});
+    // The live API returns "2026-11-11T00:00+09:00"; keep only the KST day.
+    requireRule(typeof body.date==='string'&&/^\d{4}-\d{2}-\d{2}(T[\d:.]+([+-]\d{2}:\d{2}|Z)?)?$/.test(body.date)&&body.character_name,'스케줄러 정보가 없어요. 게임 접속 및 API 제공 상태를 확인해 주세요.','NEXON_NO_SCHEDULER');
+    body.date=body.date.slice(0,10);
     const flag=value=>value===true||value==='true'?true:value===false||value==='false'?false:null;
     const count=value=>Number.isInteger(value)&&value>=0?value:null;
     const section=(items,boss=false)=>Array.isArray(items)?items.map(item=>{

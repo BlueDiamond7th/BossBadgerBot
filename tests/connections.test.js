@@ -128,6 +128,14 @@ test('official list and scheduler normalize all accounts, booleans, missing sect
   assert.equal(result.bosses[0].complete,true);assert.equal(result.bosses[0].registered,false);assert.equal(result.daily,null);
   assert.equal(paths[1].searchParams.get('ocid'),'private');assert.ok(!('ocid' in result));
 });
+test('scheduler accepts the live API date format and can read a past day',async()=>{
+  const urls=[];const client=new NexonClient({apiKey:key,sleep:async()=>{},fetchImpl:async url=>{
+    urls.push(url);return {ok:true,json:async()=>({date:'2026-11-11T00:00+09:00',character_name:'A',daily_contents:[],weekly_contents:[],boss_contents:[{content_name:'스우',difficulty:'extreme',cycle:'bossWeekly',complete_flag:'true',registration_flag:'true'}],weekly_boss_clear_count:12,weekly_boss_clear_limit_count:12})};
+  }});
+  const result=await client.scheduler('private','2026-11-11');
+  assert.equal(result.date,'2026-11-11');assert.equal(urls[0].searchParams.get('date'),'2026-11-11');
+  await client.scheduler('private');assert.equal(urls[1].searchParams.has('date'),false);
+});
 test('personal API UI contains no key value; scheduler cards paginate without public follow-ups',async t=>{
   const f=setup(t);await f.connections.connect(ctx,key);const c=f.service.snapshot(ctx).characters[0];await f.tracker.syncScheduler(ctx,c.id);
   const handler=createHandler({service:f.service,connections:f.connections,tracker:f.tracker,guildId:'g',verifyContext:async()=>ctx});
