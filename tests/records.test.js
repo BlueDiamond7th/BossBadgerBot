@@ -238,7 +238,7 @@ test('picking an unsaved week loads a preview once; saving makes it a saved week
   const menu=weekMenu(open.outputs[0]);
   assert.match(menu.options[1].description,/^지난주 · 저장됨 · 클리어 3개 · 1인 몫/);assert.equal(menu.options[1].default,true);
   assert.equal(open.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 1주차 (11/5~11/11)');
-  assert.deepEqual(open.outputs[0].components[1].toJSON().components.map(b=>b.label),['인원 편집']);
+  assert.deepEqual(open.outputs[0].components[1].toJSON().components.map(b=>b.label),['인원 편집','다른 캐릭터']);
 });
 test('a saved current week offers an explicit reload; party members see results without edit controls',async t=>{
   const {handler,chars,calls,advance}=await handlerFor(t);
@@ -246,7 +246,7 @@ test('a saved current week offers an explicit reload; party members see results 
   assert.match(pick.followUps[0].content,/^<@u1> <@u2>님이/);assert.deepEqual(pick.followUps[0].allowedMentions,{users:['u1']});
   const save=fake('button',{user:{id:'u2'},customId:pick.outputs[0].components[0].toJSON().components[0].custom_id});await handler(save);
   assert.match(save.outputs[0].content,/저장했어요/);assert.equal(save.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 2주차 (11/12~11/18)');
-  assert.deepEqual(save.outputs[0].components[1].toJSON().components.map(b=>b.label),['이번 주 최신 기록 다시 불러오기'],'a party member cannot edit sizes');
+  assert.deepEqual(save.outputs[0].components[1].toJSON().components.map(b=>b.label),['이번 주 다시 불러오기','다른 캐릭터'],'a party member cannot edit sizes');
   const sneak=fake('button',{user:{id:'u2'},customId:`mp:bhedit:${chars.u1.id}:2026-11-12`});await handler(sneak);assert.match(sneak.outputs[0].content,/본인만 보스 기록을 편집/);
   const calm=fake('select',{user:{id:'u2'},customId:`mp:bhpick:${chars.u1.id}`,values:['2026-11-12']});await handler(calm);
   assert.equal(calm.followUps.length,0);assert.equal(schedulerCalls(calls).length,1);
@@ -262,4 +262,39 @@ test('editor back button returns to the same week',async t=>{
   const edit=fake('button',{customId:`mp:bhedit:${chars.u1.id}:2026-11-05`});await handler(edit);
   const back=fake('button',{customId:edit.outputs[0].components[1].toJSON().components[0].custom_id});await handler(back);
   assert.equal(back.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 1주차 (11/5~11/11)');
+});
+
+test('boss history is reached like 스펙 변화: roster button → character picker → history, with a way back',async t=>{
+  const {handler,service,chars}=await handlerFor(t);
+  const roster=fake('button',{customId:'mp:roster:all:0'});await handler(roster);
+  const tools=roster.outputs[0].components[1].toJSON().components;
+  assert.deepEqual(tools.map(b=>b.label),['캐릭터 추가 / 삭제','스펙 변화','보스 히스토리','내 스케줄러']);
+  // u1 sees their own character first, then the party member's; u3 (no shared party) is not listed.
+  const picker=fake('button',{customId:tools[2].custom_id});await handler(picker);
+  const menu=picker.outputs[0].components[0].toJSON().components[0];
+  assert.equal(menu.custom_id,'mp:selectbh');assert.deepEqual(menu.options.map(o=>o.label),['도토리','모찌']);
+  assert.deepEqual(picker.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티']);
+  const lonely=fake('button',{user:{id:'u3'},customId:'mp:bhpicker:0'});await handler(lonely);
+  assert.deepEqual(lonely.outputs[0].components[0].toJSON().components[0].options.map(o=>o.label),['감자']);
+  // Opening a party member's history from the picker notifies them, like the slash command.
+  const open=fake('select',{customId:'mp:selectbh',values:[chars.u2.id]});await handler(open);
+  assert.equal(open.outputs[0].embeds[0].toJSON().title,'모찌 · 보스 히스토리');
+  assert.match(open.followUps[0].content,/^<@u2> <@u1>님이 \*\*모찌\*\*의 보스 히스토리/);
+  const rows=open.outputs[0].components.map(r=>r.toJSON().components.map(c=>c.label??c.custom_id));
+  assert.deepEqual(rows.slice(1),[['다른 캐릭터'],['보스방','캐릭터','파티']]);
+  const back=fake('button',{customId:open.outputs[0].components[1].toJSON().components[0].custom_id});await handler(back);
+  assert.equal(back.outputs[0].components[0].toJSON().components[0].custom_id,'mp:selectbh');
+  // Picking a character outside the viewer's parties is refused.
+  const outsider=fake('select',{customId:'mp:selectbh',values:[chars.u3.id]});await handler(outsider);
+  assert.match(outsider.outputs[0].content,/같은 파티의 파티원/);
+});
+test('preview and editor screens also carry the home navigation row',async t=>{
+  const {handler,records,chars}=await handlerFor(t);
+  const pick=fake('select',{customId:`mp:bhpick:${chars.u1.id}`,values:['2026-11-05']});await handler(pick);
+  assert.deepEqual(pick.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티']);
+  const save=fake('button',{customId:pick.outputs[0].components[0].toJSON().components[0].custom_id});await handler(save);
+  assert.deepEqual(save.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티']);
+  const boss=fake('select',{customId:save.outputs[0].components[0].toJSON().components[0].custom_id,values:['0']});await handler(boss);
+  assert.deepEqual(boss.outputs[0].components[1].toJSON().components.map(b=>b.label),['주차 편집으로 돌아가기','히스토리로 돌아가기']);
+  assert.deepEqual(boss.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티']);
 });
