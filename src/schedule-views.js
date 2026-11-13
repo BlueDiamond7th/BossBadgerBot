@@ -6,7 +6,7 @@ const row=(...v)=>new ActionRowBuilder().addComponents(...v);
 const btn=(id,label,style=ButtonStyle.Secondary,disabled=false)=>new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style).setDisabled(disabled);
 const embed=()=>new EmbedBuilder().setColor(0x46745b);
 const names=(s,states)=>s.members.filter(m=>states.includes(s.responses[m.userId]?.state??'missing')).map(m=>safe(m.name)).join(', ').slice(0,550)||'-';
-const home=()=>row(btn('sc:list:0','일정 목록'),btn('sc:mine:0','내 일정'));
+const home=()=>row(btn('mp:board','보스방'),btn('mp:roster:all:0','캐릭터'),btn('mp:parties:active:0','파티'),btn('sc:list:0','일정 목록'),btn('sc:mine:0','내 일정'));
 const bossNames=bosses=>bosses.map(b=>`${safe(b.difficulty)} ${safe(bossById(b.bossId)?.name??b.bossId)}`).join(' / ').slice(0,650)||'보스 없음';
 export const scheduleSummary=s=>`${scheduleDate(s.startAt)} · ${s.partyName}${s.status==='poll'?' (시간 투표)':s.status==='review'?' (검토 필요)':''}`;
 export function scheduleCard(s,book,now=book.now()) {
