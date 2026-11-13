@@ -15,7 +15,8 @@ export function paginate(items,page=0,size=15) {
   const current=Math.max(0,Math.min(Number.isSafeInteger(page)?page:0,pages-1));
   return {items:items.slice(current*size,(current+1)*size),page:current,pages,total:items.length};
 }
-const pager=(prefix,page,pages)=>row(button(`${prefix}:${page-1}`,'이전',ButtonStyle.Secondary,page===0),button(`${prefix}:${page+1}`,'다음',ButtonStyle.Secondary,page>=pages-1));
+// Direction suffixes keep page controls distinct from home links to the same page.
+const pager=(prefix,page,pages)=>row(button(`${prefix}:${page-1}:prev`,'이전',ButtonStyle.Secondary,page===0),button(`${prefix}:${page+1}:next`,'다음',ButtonStyle.Secondary,page>=pages-1));
 export function board(state) {
   const count=state.characters.filter(c=>c.active).length, parties=state.parties.filter(p=>!p.archived);
   return {embeds:[base().setTitle('🍁 우리들의 보스방').setDescription('내 API 키로 캐릭터를 불러오고, 목록에서 골라 파티를 만들어 보세요.\n이 채널 또는 스레드 안에서 여러 파티와 파티별 보스를 관리해요.').addFields(

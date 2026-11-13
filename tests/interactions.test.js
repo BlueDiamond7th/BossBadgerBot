@@ -86,10 +86,11 @@ test('guild-only command definitions serialize with Discord validators',()=>{
   for(const c of data) {assert.deepEqual(c.contexts,[0]);assert.ok(c.options.length<=25);}
 });
 function checkPayload(payload) {
+  const ids=new Set();
   assert.ok((payload.components??[]).length<=5);
   for(const r of payload.components??[]) {
     const row=r.toJSON();assert.ok(row.components.length<=5);
-    for(const c of row.components) {if(c.custom_id)assert.ok(c.custom_id.length<=100);if(c.options) {assert.ok(c.options.length<=25);assert.ok(c.options.length>0);}}
+    for(const c of row.components) {if(c.custom_id) {assert.ok(c.custom_id.length<=100);assert.ok(!ids.has(c.custom_id),`duplicate custom_id: ${c.custom_id}`);ids.add(c.custom_id);}if(c.options) {assert.ok(c.options.length<=25);assert.ok(c.options.length>0);}}
   }
   for(const e of payload.embeds??[]) {const emb=e.toJSON();assert.ok((emb.description??'').length<=4096);for(const f of emb.fields??[])assert.ok(f.value.length<=1024);}
 }
@@ -187,4 +188,30 @@ test('API connection replaces manual registration without command options or sec
   assert.ok(!JSON.stringify(i.outputs).includes(secret));
   const legacy=fake('modal',{customId:'mp:modal:register',fields:{getTextInputValue:()=>assert.fail('must not read old name as key')}});
   await handler(legacy);assert.equal(service.snapshot(context).characters.length,0);
+});
+
+
+test('roster next/previous buttons render every page without duplicate component IDs',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  for(let i=0;i<25;i++)service.register(context,{name:`도토리${i}`,world:'루나',job:'히어로'},`character-${i}`);
+  const click=async customId=>{
+    const i=fake('button',{customId,async editReply(payload){checkPayload(payload);this.outputs.push(payload);}});
+    await handler(i);const payload=i.outputs.at(-1);assert.ok(payload.embeds?.length,'navigation must render the roster instead of a generic error');return payload;
+  };
+  const find=(payload,label)=>payload.components.flatMap(r=>r.toJSON().components).find(c=>c.label===label);
+  let payload=await click('mp:roster:all:0');
+  assert.match(payload.embeds[0].toJSON().footer.text,/1\/3/);assert.equal(find(payload,'이전').disabled,true);
+  payload=await click(find(payload,'다음').custom_id);assert.match(payload.embeds[0].toJSON().footer.text,/2\/3/);
+  payload=await click(find(payload,'다음').custom_id);assert.match(payload.embeds[0].toJSON().footer.text,/3\/3/);assert.equal(find(payload,'다음').disabled,true);
+  payload=await click(find(payload,'이전').custom_id);assert.match(payload.embeds[0].toJSON().footer.text,/2\/3/);
+  payload=await click(find(payload,'이전').custom_id);assert.match(payload.embeds[0].toJSON().footer.text,/1\/3/);
+  // Buttons posted before this change retain their routing.
+  payload=await click('mp:roster:all:1');assert.match(payload.embeds[0].toJSON().footer.text,/2\/3/);
+});
+test('all roster filters and party list pages use unique component IDs',()=>{
+  const characters=Array.from({length:57},(_,i)=>({id:`c${i}`,ownerId:'u1',active:true,name:`캐릭터${i}`,world:'루나',job:'히어로'}));
+  const parties=Array.from({length:57},(_,i)=>({id:`p${i}`,creatorId:'u1',name:`파티${i}`,characterIds:[],bosses:[],archived:false}));
+  const state={characters,parties};
+  for(let page=0;page<6;page++)for(const owner of ['all','u1'])checkPayload(views.roster(state,page,owner));
+  for(let page=0;page<4;page++) {checkPayload(views.partyList(state,page));checkPayload(views.partyList({...state,parties:parties.map(p=>({...p,archived:true}))},page,true));}
 });
