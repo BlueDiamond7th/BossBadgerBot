@@ -24,9 +24,12 @@ export function board(state) {
     {name:'파티 미리보기',value:parties.slice(0,6).map(p=>`• ${safe(p.name)} · ${p.characterIds.length}명 · 보스 ${p.bosses.length}개`).join('\n')||'아직 파티가 없어요. 파티 만들기부터 시작하세요.'}
   ).setFooter({text:'캐릭터 수 제한 없음 · API 연결은 본인만 · 편성은 파티 생성자/관리자'})],components:[row(button('mp:register','내 API 키 연결',ButtonStyle.Primary),button('mp:roster:all:0','캐릭터 목록'),button('mp:create','파티 만들기',ButtonStyle.Primary)),row(button('mp:parties:active:0','파티 목록'),button('mp:parties:archived:0','보관함'),button('mp:board','새로고침'))],allowedMentions:{parse:[]}};
 }
-export function roster(state,page=0,owner='all',eligibleOwnerIds=null) {
+export const scouterUrl=name=>`https://maplescouter.com/ko/info?name=${encodeURIComponent(name)}`;
+const power=value=>{try {return value!=null&&/^\d+$/.test(String(value))?BigInt(value).toLocaleString('ko-KR'):'미수집';} catch {return '미수집';}};
+// 캐릭터 닉네임 · 월드 - @등록자 / 직업 / 전투력 : #### [환산 사이트]
+export function roster(state,page=0,owner='all',eligibleOwnerIds=null,powers=null) {
   const chars=state.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner));const view=paginate(chars,page,10);
-  const lines=view.items.map(c=>`**${safe(c.name)}** · ${safe(c.world??'월드 미확인')} / ${safe(c.job??'직업 미확인')}\n등록자 <@${c.ownerId}>${eligibleOwnerIds&&!eligibleOwnerIds.has(c.ownerId)?' · ⚠️ 현재 참가자 아님':''}`);
+  const lines=view.items.map(c=>`**${safe(c.name)}** · ${safe(c.world??'월드 미확인')} - <@${c.ownerId}>${eligibleOwnerIds&&!eligibleOwnerIds.has(c.ownerId)?' · ⚠️ 현재 참가자 아님':''}\n${safe(c.job??'직업 미확인')} / 전투력 : ${power(powers?.get(c.id))} [환산 사이트](${scouterUrl(c.name)})`);
   return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(lines.join('\n\n')||'등록된 캐릭터가 없어요. 내 API 키 연결을 눌러 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개 · 기존 수동 등록과 API로 불러온 캐릭터가 함께 표시돼요.`})],components:[pager(`mp:roster:${owner}`,view.page,view.pages),row(button('mp:register','캐릭터 추가 / 삭제',ButtonStyle.Primary),button('mp:specpicker:0','스펙 변화'),button('mp:schedulerpicker:0','내 스케줄러')),home()],allowedMentions:{parse:[]}};
 }
 export function partyList(state,page=0,archived=false) {
@@ -117,7 +120,7 @@ export function specDetail(character,history,manual,ctx,index=0,page=0) {
   emb.setFooter({text:'Data based on NEXON Open API · API 기록 최근 29일 · 환산은 수동 기록'});
   const components=[row(button(`mp:spec:${character.id}:${pos.page-1}:0`,'더 최근 기록',ButtonStyle.Secondary,pos.page===0),button(`mp:spec:${character.id}:${pos.page+1}:0`,'이전 기록',ButtonStyle.Secondary,pos.page>=pos.pages-1)),
     row(button(`mp:spec:${character.id}:${pos.page}:${list.page-1}`,'이전 변화',ButtonStyle.Secondary,list.page===0),button(`mp:spec:${character.id}:${pos.page}:${list.page+1}`,'다음 변화',ButtonStyle.Secondary,list.page>=list.pages-1))];
-  const links=[new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('환산 사이트 열기').setURL(`https://maplescouter.com/ko/info?name=${encodeURIComponent(character.name)}`)];
+  const links=[new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('환산 사이트 열기').setURL(scouterUrl(character.name))];
   if(character.ownerId===ctx.userId) links.unshift(button(`mp:specsync:${character.id}`,'스펙 확인',ButtonStyle.Primary),button(`mp:scheduler:${character.id}:0:0`,'내 스케줄러'));
   components.push(row(...links),home());
   return {embeds:[emb],components,allowedMentions:{parse:[]}};
