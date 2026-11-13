@@ -64,7 +64,7 @@ test('stale and unauthorized buttons fail without changing party',async t=>{
 test('public board buttons open private replies rather than rewriting the shared message',async t=>{
   const {service,handler}=setup(t);service.start(context,'start');let replyFlags;
   const i=fake('button',{customId:'mp:parties:active:0',message:{flags:{has:()=>false}},async deferReply(options){this.deferred=true;replyFlags=options.flags;}});
-  await handler(i);assert.equal(replyFlags,MessageFlags.Ephemeral);
+  await handler(i);assert.equal(replyFlags,MessageFlags.Ephemeral);assert.equal(i.deleted,undefined);
 });
 test('restore command cannot turn an already active party into an archive action',async t=>{
   const {service,handler}=setup(t);service.start(context,'start');const p=service.createParty(context,'A','create');
@@ -127,16 +127,31 @@ test('shared party query publishes a read card and removes private acknowledgeme
   assert.equal(i.deleted,true);assert.equal(i.outputs[0].flags,undefined);
   assert.equal(i.outputs.at(-1).components[0].toJSON().components[0].custom_id,`mp:detail:${p.id}`);
 });
-test('private modal submission updates the existing personal message',async t=>{
+test('private modal submission sends a new private panel and removes the old one',async t=>{
   const {service,handler}=setup(t);service.start(context,'start');let updates=0,replies=0;
   const i=fake('modal',{customId:'mp:modal:apikey',fields:{getTextInputValue:()=> 'test-key-'.repeat(8)},async deferUpdate(){updates++;this.deferred=true;},async deferReply(){replies++;this.deferred=true;}});
-  await handler(i);assert.equal(updates,1);assert.equal(replies,0);assert.equal(service.snapshot(context).characters.length,0);assert.match(i.outputs[0].content,/등록할 캐릭터/);
+  await handler(i);assert.equal(updates,1);assert.equal(replies,0);assert.equal(i.deleted,true);assert.equal(i.outputs[0].flags,MessageFlags.Ephemeral);assert.equal(service.snapshot(context).characters.length,0);assert.match(i.outputs[0].content,/등록할 캐릭터/);
 });
-test('private navigation replaces the panel without follow-up messages',async t=>{
-  const {service,handler}=setup(t);service.start(context,'start');let updated=0;
-  const i=fake('button',{customId:'mp:roster:all:0',async deferUpdate(){updated++;this.deferred=true;},async followUp(){assert.fail('must not create another panel');}});
-  await handler(i);assert.equal(updated,1);
-  assert.ok(i.outputs[0].components.some(r=>r.toJSON().components.some(c=>c.custom_id==='mp:parties:active:0')));
+test('private navigation delivers a private panel at the bottom before deleting its source',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  for(const type of ['button','select']) {
+    const events=[];
+    const i=fake(type,{customId:'mp:roster:all:0',async deferUpdate(){events.push('defer');this.deferred=true;},
+      async followUp(payload){events.push('send');assert.equal(payload.flags,MessageFlags.Ephemeral);assert.deepEqual(payload.allowedMentions,{parse:[]});this.outputs.push(payload);},
+      async deleteReply(){events.push('delete');},async editReply(){assert.fail('must send a new message');}});
+    await handler(i);assert.deepEqual(events,['defer','send','delete']);
+    assert.ok(i.outputs[0].components.some(r=>r.toJSON().components.some(c=>c.custom_id==='mp:parties:active:0')));
+  }
+});
+test('failed private delivery does not delete the source message',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  const i=fake('button',{customId:'mp:roster:all:0',async followUp(){throw new Error('network');}});
+  await handler(i);assert.equal(i.deleted,undefined);assert.match(i.outputs[0].content,/처리하지 못했어요/);
+});
+test('failed source deletion leaves the delivered private panel intact',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  const i=fake('button',{customId:'mp:roster:all:0',async deleteReply(){throw new Error('network');},async editReply(){assert.fail('must not replace the delivered panel with an error');}});
+  await handler(i);assert.equal(i.outputs.length,1);assert.equal(i.outputs[0].flags,MessageFlags.Ephemeral);assert.ok(i.outputs[0].embeds.length);
 });
 
 test('restore confirmation refreshes owner eligibility before changing stored state',async t=>{

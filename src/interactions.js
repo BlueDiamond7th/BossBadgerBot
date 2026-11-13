@@ -44,7 +44,14 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
     const shown=view.paginate(s.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner)),page,10).items;
     return view.roster(s,page,owner,eligible,tracker?.latestPowers(ctx,shown.map(c=>c.id))??null);
   }
-  async function respond(i,payload) { return i.editReply({content:null,embeds:[],components:[],allowedMentions:{parse:[]},...payload}); }
+  async function respond(i,payload,relocate=false) {
+    const response={content:null,embeds:[],components:[],allowedMentions:{parse:[]},...payload};
+    if(!relocate) return i.editReply(response);
+    // Keep the old panel until the new private message has been delivered.
+    const message=await i.followUp({...response,flags:MessageFlags.Ephemeral});
+    await i.deleteReply().catch(()=>console.warn('[panel] delete-failed'));
+    return message;
+  }
   async function getEligible(ctx,i,ids) {ctx.eligibleOwnerIds=await resolveOwners(i.channel,ids);return ctx;}
   async function detail(ctx,i,id) {
     const p=service.getParty(ctx,id,true),s=service.snapshot(ctx);
@@ -108,7 +115,8 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         requireRule(record.sellerId===i.user.id,'판매자로 지정된 사람만 수정할 수 있어요.','FORBIDDEN');
         return await i.showModal(view.distModal(`mp:modal:distedit:${record.id}`,record));
       }
-      if((i.isButton()||i.isStringSelectMenu()||i.isModalSubmit())&&i.message?.flags?.has(MessageFlags.Ephemeral)) await i.deferUpdate();
+      const privateSource=(i.isButton()||i.isStringSelectMenu()||i.isModalSubmit())&&i.message?.flags?.has(MessageFlags.Ephemeral);
+      if(privateSource) await i.deferUpdate();
       else await i.deferReply({flags:MessageFlags.Ephemeral});
       const ctx=await verifyContext(i,guildId),rid=i.id;
       let payload;
@@ -240,7 +248,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         if(i.commandName==='파티'&&i.options.getSubcommand()==='정보') payload=view.publicParty(payload,i.options.getString('파티'));
         await i.followUp({...payload,allowedMentions:{parse:[]}});
         await i.deleteReply();
-      } else await respond(i,payload);
+      } else await respond(i,payload,privateSource);
       if(publicPost) await i.followUp({...publicPost,allowedMentions:{parse:[]}});
       if(notice&&notice.owner!==ctx.userId) await i.followUp({content:`<@${notice.owner}> <@${ctx.userId}>님이 **${view.safe(notice.name)}**의 ${notice.what}을 조회했어요.`,allowedMentions:{users:[notice.owner]}}).catch(()=>console.warn('[notice] send-failed'));
       if(changed) {

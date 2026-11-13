@@ -128,7 +128,7 @@ function fake(type,properties={}) {
     inGuild:()=>true,isAutocomplete:()=>false,isChatInputCommand:()=>type==='command',isButton:()=>type==='button',isStringSelectMenu:()=>type==='select',isUserSelectMenu:()=>type==='user',isModalSubmit:()=>type==='modal',
     message:{flags:{has:()=>true}},
     async deferReply(){this.deferred=true;},async deferUpdate(){this.deferred=true;},async deleteReply(){},
-    async editReply(p){this.outputs.push(p);},async reply(p){this.replied=true;this.outputs.push(p);},async followUp(p){this.followUps.push(p);},async showModal(p){this.replied=true;this.outputs.push(p);},...properties};
+    async editReply(p){this.outputs.push(p);},async reply(p){this.replied=true;this.outputs.push(p);},async followUp(p){if(p.flags===MessageFlags.Ephemeral)this.outputs.push(p);else this.followUps.push(p);},async showModal(p){this.replied=true;this.outputs.push(p);},...properties};
 }
 const command=(root,sub,values={},user='u1')=>fake('command',{user:{id:user},commandName:root,options:{getSubcommand:()=>sub,getString:k=>values[k]??null,getBoolean:()=>null,getUser:()=>null,getNumber:()=>null}});
 const fields=values=>({getTextInputValue:k=>values[k]});
