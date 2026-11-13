@@ -25,7 +25,17 @@ export function board(state) {
   ).setFooter({text:'캐릭터 수 제한 없음 · API 연결은 본인만 · 편성은 파티 생성자/관리자'})],components:[row(button('mp:register','내 API 키 연결',ButtonStyle.Primary),button('mp:roster:all:0','캐릭터 목록'),button('mp:create','파티 만들기',ButtonStyle.Primary)),row(button('mp:parties:active:0','파티 목록'),button('mp:parties:archived:0','보관함'),button('mp:board','새로고침'))],allowedMentions:{parse:[]}};
 }
 export const scouterUrl=name=>`https://maplescouter.com/ko/info?name=${encodeURIComponent(name)}`;
-const power=value=>{try {return value!=null&&/^\d+$/.test(String(value))?BigInt(value).toLocaleString('ko-KR'):'미수집';} catch {return '미수집';}};
+const power=value=>{
+  try {
+    if(value==null||!/^\d+$/.test(String(value))) return '미수집';
+    const n=BigInt(value),eok=n/100000000n,man=n%100000000n/10000n,rest=n%10000n;
+    const parts=[];
+    if(eok) parts.push(`${eok}억`);
+    if(man) parts.push(`${man}만`);
+    if(rest||!parts.length) parts.push(String(rest));
+    return parts.join(' ');
+  } catch {return '미수집';}
+};
 // [닉네임](환산 사이트) · 월드 - @등록자 / 직업 / 전투력 : ####
 export function roster(state,page=0,owner='all',eligibleOwnerIds=null,powers=null) {
   const chars=state.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner));const view=paginate(chars,page,10);
@@ -108,7 +118,7 @@ export function specDetail(character,history,manual,ctx,index=0,page=0) {
   const pos=paginate(history,index,1),current=pos.items[0],previous=history[pos.page+1];
   const changes=current?specChanges(previous,current):['아직 수집한 스펙이 없어요. 스펙 확인을 누르거나 자동 수집을 기다려 주세요.'];
   const list=paginate(changes,page,8);
-  const emb=base().setTitle(`${safe(character.name)} · 스펙 변화`).setDescription(current?`${stamp(current.collectedAt)} 수집 (한국 시간)\n레벨 **${current.level}** · 전투력 **${BigInt(current.combatPower).toLocaleString('ko-KR')}**\n${previous?`${stamp(previous.collectedAt)} 기록과 비교`:'첫 수집 기록'}\nAPI 반영이 지연될 수 있어요. 스펙 확인을 누르면 다시 조회해요.`:'넥슨 API 연결 후 자동으로 기록해요.');
+  const emb=base().setTitle(`${safe(character.name)} · 스펙 변화`).setDescription(current?`${stamp(current.collectedAt)} 수집 (한국 시간)\n레벨 **${current.level}** · 전투력 **${power(current.combatPower)}**\n${previous?`${stamp(previous.collectedAt)} 기록과 비교`:'첫 수집 기록'}\nAPI 반영이 지연될 수 있어요. 스펙 확인을 누르면 다시 조회해요.`:'넥슨 API 연결 후 자동으로 기록해요.');
   emb.addFields({name:`변화 ${list.page+1}/${list.pages} · ${changes.length}개`,value:list.items.map(line=>safe(line).slice(0,115)).join('\n').slice(0,1024)});
   if(current?.unavailable?.length) emb.addFields({name:'미제공 항목',value:`${safe(current.unavailable.join(', '))} — 이 항목의 변화는 비교하지 않아요.`});
   const manualLines=[];
@@ -135,7 +145,7 @@ export function connectionPanel(status) {
 }
 export function characterSelection(draft,page=0) {
   const list=paginate(draft.items,page,25),removing=draft.mode==='remove',components=[];
-  if(list.items.length)components.push(row(new StringSelectMenuBuilder().setCustomId(`mp:charselect:${draft.id}:${list.page}`).setPlaceholder(removing?'삭제할 내 캐릭터 여러 개 선택':'등록할 캐릭터 여러 개 선택').setMinValues(0).setMaxValues(list.items.length).addOptions(list.items.map(c=>({label:truncate(`${c.level!=null?`Lv.${c.level} `:''}${c.name} · 전투력 ${c.combatPower!=null?BigInt(c.combatPower).toLocaleString('ko-KR'):'조회 불가'}`),description:truncate(`${c.world??'월드 미확인'} · ${c.job??'직업 미확인'}`),value:c.value,default:draft.selected.has(c.value)})))));
+  if(list.items.length)components.push(row(new StringSelectMenuBuilder().setCustomId(`mp:charselect:${draft.id}:${list.page}`).setPlaceholder(removing?'삭제할 내 캐릭터 여러 개 선택':'등록할 캐릭터 여러 개 선택').setMinValues(0).setMaxValues(list.items.length).addOptions(list.items.map(c=>({label:truncate(`${c.level!=null?`Lv.${c.level} `:''}${c.name} · 전투력 ${c.combatPower!=null?power(c.combatPower):'조회 불가'}`),description:truncate(`${c.world??'월드 미확인'} · ${c.job??'직업 미확인'}`),value:c.value,default:draft.selected.has(c.value)})))));
   components.push(pager(`mp:charpage:${draft.id}`,list.page,list.pages),row(button(`mp:charcomplete:${draft.id}`,removing?'선택 캐릭터 삭제':'등록 완료',removing?ButtonStyle.Danger:ButtonStyle.Success,draft.selected.size===0),button('mp:register','취소')));
   return {content:`${removing?'삭제할 내 캐릭터':'등록할 캐릭터'}를 여러 개 선택한 뒤 **${removing?'선택 캐릭터 삭제':'등록 완료'}**를 눌러 주세요.\n${list.page+1}/${list.pages} 페이지 · 후보 ${list.total}개 · 선택 ${draft.selected.size}개\n전투력 높은 순 · 전투력은 조회 시점 기준이며 1시간 동안 재사용해요.\n페이지를 이동해도 선택은 유지돼요. ${removing?'현재 파티에 편성 중이면 먼저 파티에서 제외해 주세요. 삭제해도 과거 기록은 보존합니다.':'선택 전 계정 목록은 본인에게만 보여요.'}${list.total?'':'\n선택 가능한 캐릭터가 없어요.'}`,embeds:[],components,allowedMentions:{parse:[]}};
 }

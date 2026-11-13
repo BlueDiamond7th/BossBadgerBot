@@ -275,7 +275,7 @@ test('combat power loads all candidates before pagination, caches across restart
   const draft=f.connections.beginSelection(ctx);f.connections.selection(ctx,draft.id,0,[draft.items[0].value]);
   await f.connections.loadSelectionPage(ctx,draft.id);assert.equal(calls.length,40);assert.ok(calls.includes('ocid-39'));
   const payload=views.characterSelection(draft),options=payload.components[0].toJSON().components[0].options;
-  assert.equal(options[0].label,'Lv.300 캐릭터0 · 전투력 123,456,789');
+  assert.equal(options[0].label,'Lv.300 캐릭터0 · 전투력 1억 2345만 6789');
   assert.equal(options[0].default,true);assert.equal(draft.selected.size,1);
   await f.connections.loadSelectionPage(ctx,draft.id);assert.equal(calls.length,40);
   const resumed=new PersonalConnections({repository:f.repository,service:f.service,encryptionKey,clientFactory:factory,now:f.tracker.now});
@@ -300,7 +300,7 @@ test('an unavailable character power does not prevent looking up the next charac
   },close(){}}));
   await f.connections.connect(ctx,key);const draft=f.connections.beginSelection(ctx);await f.connections.loadSelectionPage(ctx,draft.id);
   const options=views.characterSelection(draft).components[0].toJSON().components[0].options;
-  assert.match(options[0].label,/9,007,199,254,740,993/);assert.match(options[1].label,/조회 불가/);
+  assert.match(options[0].label,/90071992억 5474만 993/);assert.match(options[1].label,/조회 불가/);
 });
 test('disconnect during power lookup prevents stale cache writes',async t=>{
   let release;const f=setup(t,()=>({listCharacters:async()=>[remote()],combatPower:()=>new Promise(resolve=>release=()=>resolve('123')),close(){}}));
