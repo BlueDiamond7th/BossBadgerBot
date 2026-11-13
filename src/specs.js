@@ -132,6 +132,21 @@ export class SpecTracker {
     this.inflight.set(key,work);
     try {return await work;} finally {this.inflight.delete(key);}
   }
+  // Latest stored combat power per character for list views; never calls the API.
+  // Spec snapshots win; the selection-screen cache covers characters without a spec snapshot yet.
+  latestPowers(ctx,ids) {
+    const result=new Map();if(!ids.length) return result;
+    const marks=ids.map(()=>'?').join(',');
+    for(const row of this.repo.db.prepare(`SELECT character_id,json_extract(data_json,'$.combatPower') AS power,MAX(collected_at) FROM spec_snapshots
+      WHERE guild_id=? AND thread_id=? AND character_id IN (${marks}) GROUP BY character_id`).all(ctx.guildId,ctx.threadId,...ids)) if(row.power!=null) result.set(row.character_id,String(row.power));
+    const missing=ids.filter(id=>!result.has(id));
+    if(missing.length&&this.repo.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='personal_selection_power'").get()) {
+      for(const row of this.repo.db.prepare(`SELECT c.character_id,p.combat_power FROM personal_characters c JOIN personal_selection_power p
+        ON p.guild_id=c.guild_id AND p.thread_id=c.thread_id AND p.user_id=c.user_id AND p.identity_hash=c.identity_hash
+        WHERE c.guild_id=? AND c.thread_id=? AND c.character_id IN (${missing.map(()=>'?').join(',')})`).all(ctx.guildId,ctx.threadId,...missing)) result.set(row.character_id,row.combat_power);
+    }
+    return result;
+  }
   prune() {
     this.repo.db.prepare('DELETE FROM scheduler_snapshots WHERE day<?').run(kstDay(this.now()-13*86400_000));
     this.repo.db.prepare('DELETE FROM spec_snapshots WHERE collected_at<?').run(this.now()-RETENTION_MS);

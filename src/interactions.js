@@ -39,6 +39,11 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
     requireRule(tracker,'스케줄러 기능을 사용할 수 없어요.');
     return view.schedulerDetail(tracker.character(ctx,id,true),tracker.schedulerHistory(ctx,id),index,page);
   }
+  // One stored-power lookup for the characters on the shown page; no API calls.
+  function rosterView(ctx,s,page,owner,eligible=null) {
+    const shown=view.paginate(s.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner)),page,10).items;
+    return view.roster(s,page,owner,eligible,tracker?.latestPowers(ctx,shown.map(c=>c.id))??null);
+  }
   async function respond(i,payload) { return i.editReply({content:null,embeds:[],components:[],allowedMentions:{parse:[]},...payload}); }
   async function getEligible(ctx,i,ids) {ctx.eligibleOwnerIds=await resolveOwners(i.channel,ids);return ctx;}
   async function detail(ctx,i,id) {
@@ -121,9 +126,9 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
           if(sub==='목록') {
             const owner=i.options.getUser('등록자')?.id??'all',s=service.snapshot(ctx);
             const shown=view.paginate(s.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner)),0,10).items;
-            await getEligible(ctx,i,shown.map(c=>c.ownerId));payload=view.roster(s,0,owner,ctx.eligibleOwnerIds);
+            await getEligible(ctx,i,shown.map(c=>c.ownerId));payload=rosterView(ctx,s,0,owner,ctx.eligibleOwnerIds);
           }
-          if(sub==='수정') {service.editCharacter(ctx,get('캐릭터'),{name:get('이름')??undefined},rid);changed=true;payload=view.roster(service.snapshot(ctx),0,ctx.userId);}
+          if(sub==='수정') {service.editCharacter(ctx,get('캐릭터'),{name:get('이름')??undefined},rid);changed=true;payload=rosterView(ctx,service.snapshot(ctx),0,ctx.userId);}
           if(sub==='스펙') payload=specs(ctx,get('캐릭터'));
           if(sub==='스펙갱신') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');const result=await tracker.sync(ctx,get('캐릭터'));changed=!result.cached;payload=specs(ctx,get('캐릭터'));}
           if(sub==='환산기록') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');tracker.recordManual(ctx,get('캐릭터'),i.options.getNumber('수치'),get('종류'),rid);payload=specs(ctx,get('캐릭터'));}
@@ -187,7 +192,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         if(action==='board') {payload=view.board(service.snapshot(ctx));changed=true;}
         if(action==='roster') {
           const s=service.snapshot(ctx),page=Number(a),shown=view.paginate(s.characters.filter(c=>c.active&&(id==='all'||c.ownerId===id)),page,10).items;
-          await getEligible(ctx,i,shown.map(c=>c.ownerId));payload=view.roster(s,page,id,ctx.eligibleOwnerIds);
+          await getEligible(ctx,i,shown.map(c=>c.ownerId));payload=rosterView(ctx,s,page,id,ctx.eligibleOwnerIds);
         }
         if(action==='parties') payload=view.partyList(service.snapshot(ctx),Number(a),id==='archived');
         if(action==='open'||action==='detail') payload=await detail(ctx,i,selected??id);
