@@ -87,6 +87,19 @@ export class BossRecords {
     const c=this.access(ctx,characterId);
     return {character:c,weeks:this.db.prepare('SELECT * FROM boss_history WHERE guild_id=? AND thread_id=? AND character_id=? ORDER BY week DESC').all(ctx.guildId,ctx.threadId,characterId).map(r=>({...JSON.parse(r.data_json),week:r.week,savedBy:r.saved_by,savedAt:r.saved_at}))};
   }
+  periodOf(week) {
+    const thisWeek=weekStart(this.now());
+    return week===thisWeek?'current':week===addDays(thisWeek,-7)?'last':null;
+  }
+  // Dropdown entries: every saved week plus this week and last week when they are not saved yet.
+  // Saved weeks are shown from the database and never trigger an API request.
+  weekOptions(ctx,characterId) {
+    const {character,weeks}=this.history(ctx,characterId),thisWeek=weekStart(this.now()),saved=new Set(weeks.map(w=>w.week));
+    const options=weeks.map(w=>({week:w.week,saved:true,period:this.periodOf(w.week),data:w}));
+    for(const week of [thisWeek,addDays(thisWeek,-7)]) if(!saved.has(week)) options.push({week,saved:false,period:this.periodOf(week)});
+    options.sort((a,b)=>b.week.localeCompare(a.week));
+    return {character,options};
+  }
   week(ctx,characterId,week) {
     const {character,weeks}=this.history(ctx,characterId),w=weeks.find(x=>x.week===week);
     requireRule(w,'저장한 주차 기록을 찾을 수 없어요. 히스토리를 다시 열어 주세요.','NOT_FOUND');

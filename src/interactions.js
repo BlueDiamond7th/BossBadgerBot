@@ -18,6 +18,19 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
   }
   // Viewing another member's boss records notifies that member.
   const bossNotice=(record,what)=>({owner:record.ownerId,name:record.characterName,what});
+  // History shows one week at a time; by default the most recently saved week.
+  function historyView(ctx,id,{selected,notice=null,page=0}={}) {
+    const o=need(records,'보스 기록').weekOptions(ctx,id);
+    return view.bossHistory(o,priceMap(ctx.guildId),{selected:selected===undefined?o.options.find(x=>x.saved)?.week??null:selected,canEdit:o.character.ownerId===ctx.userId,notice,page});
+  }
+  // A saved week is shown from the database; only an unsaved this/last week loads a preview.
+  async function pickWeek(ctx,id,week) {
+    const r=need(records,'보스 기록'),option=r.weekOptions(ctx,id).options.find(o=>o.week===week);
+    requireRule(option,'선택할 수 없는 주차예요. 히스토리를 다시 열어 주세요.','NOT_FOUND');
+    if(option.saved) return {payload:historyView(ctx,id,{selected:week}),notice:null};
+    const result=await r.view(ctx,id,option.period);
+    return {payload:view.bossRecord(result.record,priceMap(ctx.guildId),{fetched:result.fetched}),notice:result.fetched?bossNotice(result.record,`${view.weekLabel(result.record.week)} 보스 기록`):null};
+  }
   function specs(ctx,id,index=0,page=0) {
     requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요. 봇을 업데이트해 주세요.');
     return view.specDetail(tracker.character(ctx,id),tracker.history(ctx,id),tracker.manualHistory(ctx,id),ctx,index,page);
@@ -178,7 +191,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
           if(p) payload=await detail(ctx,i,p.id);
         } else if(i.commandName==='보스기록') {
           const r=need(records,'보스 기록'),id=get('캐릭터');
-          if(sub==='히스토리') {const h=r.history(ctx,id);payload=view.bossHistory(h,0,priceMap(ctx.guildId),h.character.ownerId===ctx.userId);notice={owner:h.character.ownerId,name:h.character.name,what:'보스 히스토리'};}
+          if(sub==='히스토리') {const c=r.access(ctx,id);payload=historyView(ctx,id);notice={owner:c.ownerId,name:c.name,what:'보스 히스토리'};}
         } else if(i.commandName==='결정석') {
           const book=need(prices,'결정석 가격');
           if(sub==='가격표') payload=view.priceTable(book.all(ctx.guildId));
@@ -237,25 +250,26 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         if(action==='difficulty') {service.addBoss(ctx,id,b,selected,rid,Number(a));changed=true;payload=await detail(ctx,i,id);}
         if(action==='removeboss') {service.removeBoss(ctx,id,selected,rid,Number(a));changed=true;payload=await detail(ctx,i,id);}
         if(action==='copy') {await withPartyOwners(ctx,i,id);const p=service.copyParty(ctx,id,null,rid);changed=true;payload=await detail(ctx,i,p.id);}
-        if(action==='bhrefresh') {
+        if(action==='bhrefresh'||action==='bhreload') {
           const r=need(records,'보스 기록'),period=a==='last'?'last':'current',result=await r.refresh(ctx,id,period),record=r.cached(ctx,id,period);
           requireRule(record,'해당 주차의 스케줄러 기록을 찾지 못했어요. 게임 접속 여부와 API 제공 상태를 확인해 주세요.','NEXON_NO_SCHEDULER');
           payload=view.bossRecord(record,priceMap(ctx.guildId),{fetched:!result.cached,refreshed:result.cached?'cached':'fetched'});
-          if(!result.cached) notice=bossNotice(record,`${record.week} 주차 보스 기록`);
+          if(!result.cached) notice=bossNotice(record,`${view.weekLabel(record.week)} 보스 기록`);
         }
-        if(action==='bhload') {
-          const result=await need(records,'보스 기록').view(ctx,id,a==='last'?'last':'current');
-          payload=view.bossRecord(result.record,priceMap(ctx.guildId),{fetched:result.fetched});
-          if(result.fetched) notice=bossNotice(result.record,`${result.record.week} 주차 보스 기록`);
+        if(action==='bhpick'||action==='bhload') {
+          // bhload: buttons on messages sent before the week dropdown existed.
+          const r=need(records,'보스 기록'),week=action==='bhpick'?selected:r.weekOptions(ctx,id).options.find(o=>o.period===(a==='last'?'last':'current'))?.week;
+          ({payload,notice}=await pickWeek(ctx,id,week));
         }
+        if(action==='bhshow') payload=historyView(ctx,id,{selected:a});
         // Saving leads straight to the party-size editor for the owner; others return to the history.
         if(action==='bhsave') {
           const r=need(records,'보스 기록'),record=r.save(ctx,id,a,Number(b)),done='보스 기록을 저장했어요. 같은 주차는 마지막으로 저장한 기록으로 바뀌어요.';
           if(record.ownerId===ctx.userId&&record.cleared.length) payload=view.bossWeekEditor(r.week(ctx,id,record.week),priceMap(ctx.guildId),`${done}\n함께 클리어한 인원을 고르면 결정석을 그 인원만큼 나눠요.`);
-          else {const h=r.history(ctx,id);payload=view.bossHistory(h,0,priceMap(ctx.guildId),h.character.ownerId===ctx.userId,done);}
+          else payload=historyView(ctx,id,{selected:record.week,notice:done});
         }
-        if(action==='bhskip') {const h=need(records,'보스 기록').history(ctx,id);payload=view.bossHistory(h,0,priceMap(ctx.guildId),h.character.ownerId===ctx.userId,'저장하지 않았어요.');}
-        if(action==='bhist') {const h=need(records,'보스 기록').history(ctx,id);payload=view.bossHistory(h,Number(a),priceMap(ctx.guildId),h.character.ownerId===ctx.userId);}
+        if(action==='bhskip') payload=historyView(ctx,id,{notice:'저장하지 않았어요.'});
+        if(action==='bhist') payload=historyView(ctx,id,{page:Number(a)||0});
         if(action==='bhweek'||action==='bhedit') {
           const w=need(records,'보스 기록').week(ctx,id,selected??a);
           requireRule(w.character.ownerId===ctx.userId,'캐릭터를 등록한 본인만 보스 기록을 편집할 수 있어요.','FORBIDDEN');

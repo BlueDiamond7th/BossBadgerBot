@@ -195,28 +195,45 @@ const count=(n,limit)=>`${n??'?'}/${limit??'?'}`;
 // Loaded (not yet saved) week opened from the history: save / skip / refresh / back.
 export function bossRecord(record,prices,{fetched=false,refreshed=null}={}) {
   const source=fetched?'방금 API에서 불러왔어요.':`${stamp(record.collectedAt)}에 수집한 캐시예요.${record.final?' (지난 날짜 확정 기록)':''}`;
-  const emb=base().setTitle(`${safe(record.characterName)} · ${record.week} 주차 보스 기록 (저장 전)`).setDescription(`${record.day} 기준 · 주간 보스 ${count(record.clearCount,record.clearLimit)} 클리어\n결정석 가격 합계(1인 기준) **${formatMeso(clearedValue(record.cleared,prices))}**\n${source}`)
+  const emb=base().setTitle(`${safe(record.characterName)} · ${weekLabel(record.week)} 보스 기록 (저장 전)`).setDescription(`${record.day} 기준 · 주간 보스 ${count(record.clearCount,record.clearLimit)} 클리어\n결정석 가격 합계(1인 기준) **${formatMeso(clearedValue(record.cleared,prices))}**\n${source}`)
     .addFields({name:`클리어한 보스 ${record.cleared.length}개`,value:clearedLines(record.cleared,prices).join('\n').slice(0,1024)||'클리어한 보스가 없어요.'})
     .setFooter({text:'Data based on NEXON Open API · 갱신은 등록자의 API 키로 다시 조회해요.'});
   const content=`${refreshed==='cached'?'최근에 수집한 기록이라 다시 조회하지 않았어요. ':''}이 주차 기록을 히스토리에 저장할까요? 저장하면 함께 클리어한 인원을 편집할 수 있어요.`;
   return {content,embeds:[emb],components:[row(button(`mp:bhsave:${record.characterId}:${record.day}:${record.collectedAt}`,'저장',ButtonStyle.Primary),button(`mp:bhskip:${record.characterId}`,'저장 안 함'),button(`mp:bhrefresh:${record.characterId}:${record.period??'current'}`,'갱신'),button(`mp:bhist:${record.characterId}:0`,'히스토리로'))],allowedMentions:{parse:[]}};
 }
-export function bossHistory({character,weeks},page,prices,canEdit=false,notice=null) {
-  const view=paginate(weeks,page,4);
-  const emb=base().setTitle(`${safe(character.name)} · 보스 히스토리`).setDescription(view.total?`저장한 주차 ${view.total}개 · 최신순`:'저장한 기록이 없어요. 아래 불러오기 버튼으로 이번 주·지난주 기록을 불러와 저장하세요.');
-  for(const w of view.items) emb.addFields({name:`${w.week} 주차 · ${count(w.clearCount,w.clearLimit)} · 1인 몫 ${formatMeso(clearedValue(w.cleared,prices))}`,value:clearedLines(w.cleared,prices,true).join('\n').slice(0,1024)||'클리어 없음'});
-  emb.setFooter({text:`${view.page+1}/${view.pages} 페이지 · 결정석 금액은 현재 가격표 기준 · 인원은 등록자가 편집할 수 있어요`});
-  const components=[row(button(`mp:bhload:${character.id}:current`,'이번 주 불러오기',ButtonStyle.Primary),button(`mp:bhload:${character.id}:last`,'지난주 불러오기'))];
-  if(canEdit&&view.items.some(w=>w.cleared.length)) components.push(row(new StringSelectMenuBuilder().setCustomId(`mp:bhweek:${character.id}`).setPlaceholder('인원을 편집할 주차 선택').addOptions(view.items.filter(w=>w.cleared.length).map(w=>({label:`${w.week} 주차`,value:w.week,description:truncate(`클리어 ${w.cleared.length}개 · 1인 몫 ${formatMeso(clearedValue(w.cleared,prices))}`)})))));
-  components.push(pager(`mp:bhist:${character.id}`,view.page,view.pages));
+// "11월 2주차 (11/12~11/18)": weeks start on the Thursday reset; n counts that month's Thursdays.
+export function weekLabel(week) {
+  const d=new Date(`${week}T00:00:00Z`),end=new Date(d.getTime()+6*86400_000),md=x=>`${x.getUTCMonth()+1}/${x.getUTCDate()}`;
+  return `${d.getUTCMonth()+1}월 ${Math.ceil(d.getUTCDate()/7)}주차 (${md(d)}~${md(end)})`;
+}
+// History shows only the week picked in the dropdown. Saved weeks come from the database;
+// this week and last week appear as "저장 전" until saved, and picking them loads a preview.
+export function bossHistory({character,options},prices,{selected=null,canEdit=false,notice=null,page=0}={}) {
+  const current=options.find(o=>o.week===selected&&o.saved),savedCount=options.filter(o=>o.saved).length;
+  const emb=base();
+  if(current) {
+    const w=current.data;
+    emb.setTitle(`${safe(character.name)} · ${weekLabel(w.week)}`).setDescription(`주간 보스 ${count(w.clearCount,w.clearLimit)} 클리어 · 1인 몫 합계 **${formatMeso(clearedValue(w.cleared,prices))}**`)
+      .addFields({name:`클리어한 보스 ${w.cleared.length}개`,value:clearedLines(w.cleared,prices,true).join('\n').slice(0,1024)||'클리어 없음'});
+  } else emb.setTitle(`${safe(character.name)} · 보스 히스토리`).setDescription(savedCount?`저장한 주차 ${savedCount}개 · 아래에서 주차를 선택하세요.`:'저장한 기록이 없어요. 아래에서 이번 주 또는 지난주를 선택해 불러온 뒤 저장하세요.');
+  emb.setFooter({text:'결정석 금액은 현재 가격표 기준 · 저장한 주차는 다시 불러오지 않아요 · 인원은 등록자가 편집해요'});
+  const list=paginate(options,page,25);
+  const components=[row(new StringSelectMenuBuilder().setCustomId(`mp:bhpick:${character.id}`).setPlaceholder('주차 선택').addOptions(list.items.map(o=>({
+    label:truncate(weekLabel(o.week)),value:o.week,default:o.week===selected,
+    description:truncate(o.saved?`${o.period==='current'?'이번 주 · ':o.period==='last'?'지난주 · ':''}저장됨 · 클리어 ${o.data.cleared.length}개 · 1인 몫 ${formatMeso(clearedValue(o.data.cleared,prices))}`:`${o.period==='current'?'이번 주':'지난주'} · 저장 전 (선택하면 불러와요)`)}))))];
+  const actions=[];
+  if(current&&canEdit&&current.data.cleared.length) actions.push(button(`mp:bhedit:${character.id}:${current.week}`,'인원 편집',ButtonStyle.Primary));
+  if(current?.period==='current') actions.push(button(`mp:bhreload:${character.id}:current`,'이번 주 최신 기록 다시 불러오기'));
+  if(actions.length) components.push(row(...actions));
+  if(list.pages>1) components.push(pager(`mp:bhist:${character.id}`,list.page,list.pages));
   return {content:notice,embeds:[emb],components,allowedMentions:{parse:[]}};
 }
 // Week editor: pick one cleared boss, then pick how many people shared it.
 export function bossWeekEditor({character,week:w},prices,notice=null) {
-  const emb=base().setTitle(`${safe(character.name)} · ${w.week} 주차 편집`).setDescription(`${clearedLines(w.cleared,prices,true).join('\n').slice(0,3800)}\n\n**1인 몫 합계 ${formatMeso(clearedValue(w.cleared,prices))}**`)
+  const emb=base().setTitle(`${safe(character.name)} · ${weekLabel(w.week)} 편집`).setDescription(`${clearedLines(w.cleared,prices,true).join('\n').slice(0,3800)}\n\n**1인 몫 합계 ${formatMeso(clearedValue(w.cleared,prices))}**`)
     .setFooter({text:'보스를 고르고 함께 클리어한 인원을 선택하면 결정석 가격을 그 인원만큼 나눠요.'});
   const options=w.cleared.slice(0,25).map((b,i)=>({label:truncate(`${i+1}. ${b.difficulty} ${b.name}`),value:String(i),description:truncate(`${b.partySize??1}인 · 최대 ${entryLimit(b)}인${entryPrice(b,prices)?` · 1인 ${formatMeso(entryShare(b,prices))}`:' · 가격 없음'}`)}));
-  return {content:notice,embeds:[emb],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:bhboss:${character.id}:${w.week}:${w.rev??0}`).setPlaceholder('인원을 바꿀 보스 선택').addOptions(options)),row(button(`mp:bhist:${character.id}:0`,'히스토리로 돌아가기'))],allowedMentions:{parse:[]}};
+  return {content:notice,embeds:[emb],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:bhboss:${character.id}:${w.week}:${w.rev??0}`).setPlaceholder('인원을 바꿀 보스 선택').addOptions(options)),row(button(`mp:bhshow:${character.id}:${w.week}`,'히스토리로 돌아가기'))],allowedMentions:{parse:[]}};
 }
 export function partySizePicker({character,week:w},index,prices) {
   const b=w.cleared[index],price=entryPrice(b,prices),limit=entryLimit(b);
