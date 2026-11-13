@@ -6,6 +6,7 @@ import { bossById } from './catalog.js';
 import * as view from './views.js';
 
 export function createHandler({service,guildId,tracker=null,connections=null,records=null,prices=null,distributions=null,onConnectionChanged=()=>{},verifyContext=contextFor,resolveOwners=eligibleOwners,refreshBoard=async()=>{}}) {
+  const privatePanels=new Map();
   const priceMap=gid=>prices?.all(gid).prices??{};
   const need=(feature,label)=>{requireRule(feature,`${label} 기능을 사용할 수 없어요. 봇을 업데이트해 주세요.`);return feature;};
   // Edits the shared card the button or modal came from; ephemeral panels are replaced by the normal reply.
@@ -51,12 +52,26 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
       return [...latest.values()].some(message=>BigInt(message.id)>BigInt(i.message.id));
     } catch {console.warn('[panel] position-unavailable');return false;}
   }
+  async function rememberPanel(i,message,deletedSource=null) {
+    if(!message?.id) return;
+    const now=Date.now();
+    // Interaction tokens cannot delete ephemeral messages after 15 minutes.
+    for(const [key,panel] of privatePanels) if(panel.expiresAt<=now) privatePanels.delete(key);
+    const key=`${i.guildId}:${i.channel.id}:${i.user.id}`,previous=privatePanels.get(key);
+    privatePanels.set(key,{id:message.id,expiresAt:(i.createdTimestamp??now)+15*60_000,remove:()=>i.deleteReply(message.id)});
+    if(previous&&previous.id!==message.id&&previous.id!==deletedSource) await previous.remove().catch(()=>console.warn('[panel] previous-delete-failed'));
+  }
   async function respond(i,payload,privateSource=false) {
     const response={content:null,embeds:[],components:[],allowedMentions:{parse:[]},...payload};
-    if(!privateSource||!await pushedUp(i)) return i.editReply(response);
+    if(!privateSource||!await pushedUp(i)) {
+      const message=await i.editReply(response);
+      await rememberPanel(i,message);
+      return message;
+    }
     // Keep the old panel until the new private message has been delivered.
     const message=await i.followUp({...response,flags:MessageFlags.Ephemeral});
     await i.deleteReply().catch(()=>console.warn('[panel] delete-failed'));
+    await rememberPanel(i,message,i.message.id);
     return message;
   }
   async function getEligible(ctx,i,ids) {ctx.eligibleOwnerIds=await resolveOwners(i.channel,ids);return ctx;}
@@ -266,7 +281,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
       requireRule(payload,'지원하지 않는 동작이에요. 명령어를 다시 열어 주세요.');
       const shared=i.isChatInputCommand()&&((i.commandName==='파티'&&['목록','정보'].includes(i.options.getSubcommand()))||(i.commandName==='캐릭터'&&i.options.getSubcommand()==='목록'));
       if(shared) {
-        await respond(i,{content:'조회한 내용을 채널에 게시합니다.'});
+        await i.editReply({content:'조회한 내용을 채널에 게시합니다.',embeds:[],components:[],allowedMentions:{parse:[]}});
         if(i.commandName==='파티'&&i.options.getSubcommand()==='정보') payload=view.publicParty(payload,i.options.getString('파티'));
         await i.followUp({...payload,allowedMentions:{parse:[]}});
         await i.deleteReply();
@@ -282,7 +297,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
     } catch(error) {
       console.warn('[interaction]',error.code??error.name);
       const payload={content:visibleError(error),embeds:[],components:[],allowedMentions:{parse:[]}};
-      try {if(i.deferred||i.replied) await i.editReply(payload);else await i.reply({...payload,flags:MessageFlags.Ephemeral});} catch { console.warn('[reply] response-unavailable'); }
+      try {if(i.deferred||i.replied) await respond(i,payload);else await i.reply({...payload,flags:MessageFlags.Ephemeral});} catch { console.warn('[reply] response-unavailable'); }
       // Persisted mutations remain valid even if rendering or Discord delivery failed.
       if(changed) {
         try {const ctx=await verifyContext(i,guildId);await refreshBoard(i,ctx);} catch {console.warn('[board-refresh] retry-later');}

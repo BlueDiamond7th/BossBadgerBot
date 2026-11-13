@@ -133,6 +133,61 @@ test('shared party query publishes a read card and removes private acknowledgeme
   assert.equal(i.deleted,true);assert.equal(i.outputs[0].flags,undefined);
   assert.equal(i.outputs.at(-1).components[0].toJSON().components[0].custom_id,`mp:detail:${p.id}`);
 });
+function trackedCommand(userId='u1',channelId='t',root='캐릭터',sub='연결') {
+  const i=command(root,sub);i.user={id:userId};i.channel={id:channelId};i.removed=[];
+  i.responseId=String(10000+n);
+  i.editReply=async payload=>{i.outputs.push(payload);return {id:i.responseId};};
+  i.deleteReply=async id=>{i.removed.push(id??i.responseId);};
+  return i;
+}
+test('a new private command removes the previous private panel in the same channel',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  const first=trackedCommand(),second=trackedCommand();
+  await handler(first);assert.deepEqual(first.removed,[]);
+  await handler(second);assert.deepEqual(first.removed,[first.responseId]);assert.deepEqual(second.removed,[]);
+});
+test('private command cleanup is isolated by user and channel',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  const first=trackedCommand(),otherUser=trackedCommand('u2'),otherChannel=trackedCommand('u1','other');
+  for(const i of [first,otherUser,otherChannel]) await handler(i);
+  assert.deepEqual(first.removed,[]);assert.deepEqual(otherUser.removed,[]);assert.deepEqual(otherChannel.removed,[]);
+  await handler(trackedCommand());
+  assert.deepEqual(first.removed,[first.responseId]);assert.deepEqual(otherUser.removed,[]);assert.deepEqual(otherChannel.removed,[]);
+});
+test('public query acknowledgements do not replace the tracked private panel',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  const first=trackedCommand(),shared=trackedCommand('u1','t','파티','목록');
+  await handler(first);await handler(shared);
+  assert.deepEqual(first.removed,[]);assert.deepEqual(shared.removed,[shared.responseId]);
+  await handler(trackedCommand());assert.deepEqual(first.removed,[first.responseId]);assert.deepEqual(shared.removed,[shared.responseId]);
+});
+test('failed command delivery leaves the previous private panel available',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  const first=trackedCommand();await handler(first);
+  const next=trackedCommand();next.editReply=async()=>{throw new Error('network');};
+  await handler(next);assert.deepEqual(first.removed,[]);
+});
+test('private command errors also replace the previous private response',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  const first=trackedCommand('u1','t','캐릭터','스펙'),second=trackedCommand('u1','t','캐릭터','스펙');
+  await handler(first);await handler(second);
+  assert.match(second.outputs[0].content,/스펙 추적 기능/);assert.deepEqual(first.removed,[first.responseId]);
+});
+test('expired private response tokens do not prevent opening a new panel',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  const first=trackedCommand();first.createdTimestamp=Date.now()-16*60_000;
+  await handler(first);
+  const next=trackedCommand();await handler(next);
+  assert.deepEqual(first.removed,[]);assert.ok(next.outputs[0].components.length);
+});
+test('updating a panel refreshes the deletion handle used by the next command',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  const first=trackedCommand();await handler(first);
+  const button=fake('button',{message:{id:first.responseId,flags:{has:()=>true}},customId:'mp:register',
+    async editReply(p){this.outputs.push(p);return {id:first.responseId};},async deleteReply(id){this.removed=id;}});
+  await handler(button);assert.deepEqual(first.removed,[]);
+  await handler(trackedCommand());assert.equal(button.removed,first.responseId);assert.deepEqual(first.removed,[]);
+});
 test('private modal submission moves a displaced panel to the bottom',async t=>{
   const {service,handler}=setup(t);service.start(context,'start');let updates=0,replies=0;
   const i=fake('modal',{...privatePanel(),customId:'mp:modal:apikey',fields:{getTextInputValue:()=> 'test-key-'.repeat(8)},async deferUpdate(){updates++;this.deferred=true;},async deferReply(){replies++;this.deferred=true;}});
