@@ -5,7 +5,7 @@ import { Repository } from '../src/repository.js';
 import { PartyService } from '../src/service.js';
 import { PersonalConnections } from '../src/connections.js';
 import { SpecTracker } from '../src/specs.js';
-import { BossRecords, weekStart, clearedValue } from '../src/records.js';
+import { BossRecords, weekStart, clearedValue, entryLimit, entryShare } from '../src/records.js';
 import { PriceBook, DistributionBook } from '../src/revenue.js';
 import { DEFAULT_CRYSTAL_PRICES } from '../src/catalog.js';
 import { createHandler } from '../src/interactions.js';
@@ -202,4 +202,47 @@ test('crystal price command updates the table shown in party revenue',async t=>{
   const detail=fake('button',{customId:`mp:detail:${party.id}`});await handler(detail);
   const field=detail.outputs[0].embeds[0].toJSON().fields.find(f=>f.name.startsWith('결정석 수익'));
   assert.match(field.value,/카오스 감시자 칼로스: 6억 5,000만 메소 \(13억 메소 ÷ 2명\)/);
+});
+
+test('saved clears can be split by party size up to each boss limit, owner only, and survive re-saving',async t=>{
+  const f=setup(t),{chars}=await f.ready();
+  const {record}=await f.records.view(ctx(),chars.u1.id,'last');f.records.save(ctx(),chars.u1.id,record.day,record.collectedAt);
+  const prices=DEFAULT_CRYSTAL_PRICES;
+  assert.deepEqual(f.records.week(ctx(),chars.u1.id,'2026-11-05').week.cleared.map(b=>[b.name,entryLimit(b)]),[['스우',2],['감시자 칼로스',6],['자쿰',6]]);
+  assert.equal(entryLimit({bossId:'adversary',difficulty:'하드'}),3);
+  const edited=f.records.setPartySize(ctx(),chars.u1.id,'2026-11-05',0,1,3);
+  assert.equal(edited.week.rev,1);assert.equal(entryShare(edited.week.cleared[1],prices),410_000_000);
+  assert.equal(clearedValue(edited.week.cleared,prices),545_000_000+410_000_000);
+  assert.throws(()=>f.records.setPartySize(ctx(),chars.u1.id,'2026-11-05',0,0,2),{code:'STALE'});
+  assert.throws(()=>f.records.setPartySize(ctx(),chars.u1.id,'2026-11-05',1,0,3),/1~2명/);
+  assert.throws(()=>f.records.setPartySize(ctx('u2'),chars.u1.id,'2026-11-05',1,0,2),{code:'FORBIDDEN'});
+  f.records.setPartySize(ctx(),chars.u1.id,'2026-11-05',1,0,2);
+  f.records.save(ctx(),chars.u1.id,record.day,record.collectedAt);
+  assert.deepEqual(f.records.week(ctx(),chars.u1.id,'2026-11-05').week.cleared.map(b=>b.partySize??1),[2,3,1]);
+});
+test('history edit flow: week → boss → 1~N people, with the split shown in history',async t=>{
+  const {handler,records,chars}=await handlerFor(t);
+  const {record}=await records.view(ctx(),chars.u1.id,'last');records.save(ctx(),chars.u1.id,record.day,record.collectedAt);
+  const open=command('보스기록','히스토리',{'캐릭터':chars.u1.id});await handler(open);
+  const weekMenu=open.outputs[0].components[0].toJSON().components[0];
+  assert.equal(weekMenu.custom_id,`mp:bhweek:${chars.u1.id}`);assert.equal(weekMenu.options[0].value,'2026-11-05');
+  const editor=fake('select',{customId:weekMenu.custom_id,values:['2026-11-05']});await handler(editor);
+  const bossMenu=editor.outputs[0].components[0].toJSON().components[0];
+  assert.deepEqual(bossMenu.options.map(o=>o.label),['1. 익스트림 스우','2. 카오스 감시자 칼로스','3. 카오스 자쿰']);
+  const pick=fake('select',{customId:bossMenu.custom_id,values:['1']});await handler(pick);
+  const sizeMenu=pick.outputs[0].components[0].toJSON().components[0];
+  assert.deepEqual(sizeMenu.options.map(o=>o.label),['1인 (솔플)','2인','3인','4인','5인','6인']);
+  assert.equal(sizeMenu.options[2].description,'1인 4억 1,000만 메소');
+  const set=fake('select',{customId:sizeMenu.custom_id,values:['3']});await handler(set);
+  assert.match(set.outputs[0].content,/카오스 감시자 칼로스\*\*을\(를\) 3인으로 바꿨어요/);
+  assert.match(set.outputs[0].embeds[0].toJSON().description,/2\. 카오스 감시자 칼로스 · 12억 3,000만 메소 ÷ 3명 = \*\*4억 1,000만 메소\*\*/);
+  // The old size menu is stale after the edit.
+  const replay=fake('select',{customId:sizeMenu.custom_id,values:['2']});await handler(replay);assert.match(replay.outputs[0].content,/기록이 바뀌었어요/);
+  const again=command('보스기록','히스토리',{'캐릭터':chars.u1.id});await handler(again);
+  assert.match(again.outputs[0].embeds[0].toJSON().fields[0].name,/1인 몫 9억 5,500만 메소/);
+  // A party member can read but not edit.
+  const other=command('보스기록','히스토리',{'캐릭터':chars.u1.id},'u2');await handler(other);
+  assert.equal(other.outputs[0].components[0].toJSON().components[0].custom_id.startsWith('mp:bhist:'),true);
+  const sneak=fake('select',{user:{id:'u2'},customId:weekMenu.custom_id,values:['2026-11-05']});await handler(sneak);
+  assert.match(sneak.outputs[0].content,/본인만 보스 기록을 편집/);
 });

@@ -1,6 +1,6 @@
 import { requireRule } from './errors.js';
 import { kstDay } from './nexon.js';
-import { fromScheduler, priceKey } from './catalog.js';
+import { fromScheduler, priceKey, bossById, partyLimit } from './catalog.js';
 
 const DAY=86400_000;
 // MapleStory weekly bosses reset on Thursday 00:00 KST. Returns that Thursday as YYYY-MM-DD.
@@ -73,6 +73,12 @@ export class BossRecords {
     requireRule(row,'불러온 기록이 만료됐어요. 다시 조회해 주세요.','NOT_FOUND');
     requireRule(row.collected_at===collectedAt,'그 사이 기록이 갱신됐어요. 다시 확인한 뒤 저장해 주세요.','STALE');
     const record=toRecord(c,null,row),{characterName,ownerId,period,...data}=record;
+    // Re-saving a week keeps party sizes already chosen for the same boss and difficulty.
+    const previous=this.db.prepare('SELECT data_json FROM boss_history WHERE guild_id=? AND thread_id=? AND character_id=? AND week=?').get(ctx.guildId,ctx.threadId,characterId,record.week);
+    if(previous) {
+      const sizes=new Map(JSON.parse(previous.data_json).cleared.filter(b=>b.partySize).map(b=>[entryKey(b),b.partySize]));
+      for(const b of data.cleared) if(sizes.has(entryKey(b))) b.partySize=sizes.get(entryKey(b));
+    }
     this.db.prepare(`INSERT INTO boss_history VALUES(?,?,?,?,?,?,?)
       ON CONFLICT(guild_id,thread_id,character_id,week) DO UPDATE SET data_json=excluded.data_json,saved_by=excluded.saved_by,saved_at=excluded.saved_at`).run(ctx.guildId,ctx.threadId,characterId,record.week,JSON.stringify(data),ctx.userId,this.now());
     return record;
@@ -80,6 +86,25 @@ export class BossRecords {
   history(ctx,characterId) {
     const c=this.access(ctx,characterId);
     return {character:c,weeks:this.db.prepare('SELECT * FROM boss_history WHERE guild_id=? AND thread_id=? AND character_id=? ORDER BY week DESC').all(ctx.guildId,ctx.threadId,characterId).map(r=>({...JSON.parse(r.data_json),week:r.week,savedBy:r.saved_by,savedAt:r.saved_at}))};
+  }
+  week(ctx,characterId,week) {
+    const {character,weeks}=this.history(ctx,characterId),w=weeks.find(x=>x.week===week);
+    requireRule(w,'저장한 주차 기록을 찾을 수 없어요. 히스토리를 다시 열어 주세요.','NOT_FOUND');
+    return {character,week:w};
+  }
+  // Only the character's registrant edits how many people shared each clear.
+  setPartySize(ctx,characterId,week,rev,index,size) {
+    const {character,week:w}=this.week(ctx,characterId,week);
+    requireRule(character.ownerId===ctx.userId,'캐릭터를 등록한 본인만 보스 기록을 편집할 수 있어요.','FORBIDDEN');
+    requireRule((w.rev??0)===rev,'그 사이 기록이 바뀌었어요. 히스토리를 다시 열어 주세요.','STALE');
+    const entry=w.cleared[index];
+    requireRule(Number.isInteger(index)&&entry,'편집할 보스를 다시 선택해 주세요.','NOT_FOUND');
+    const limit=entryLimit(entry);
+    requireRule(Number.isInteger(size)&&size>=1&&size<=limit,`인원은 1~${limit}명 중에서 선택해 주세요.`);
+    entry.partySize=size;
+    const {week:_,savedBy,savedAt,...data}={...w,rev:(w.rev??0)+1};
+    this.db.prepare('UPDATE boss_history SET data_json=? WHERE guild_id=? AND thread_id=? AND character_id=? AND week=?').run(JSON.stringify(data),ctx.guildId,ctx.threadId,characterId,week);
+    return {character,week:{...w,...data}};
   }
 }
 
@@ -94,6 +119,12 @@ function toRecord(character,period,row) {
     }),
   };
 }
+const entryKey=b=>`${b.bossId??b.name}|${b.difficulty}`;
+// Unknown bosses (not in the catalog) can still be split up to 6.
+export const entryLimit=b=>{const boss=b.bossId&&bossById(b.bossId);return boss?partyLimit(boss,b.difficulty):6;};
+export const entryPrice=(b,prices)=>b.bossId?prices[priceKey(b.bossId,b.difficulty)]??0:0;
+// One clear's crystal share: price divided by the chosen party size (1 when not chosen).
+export const entryShare=(b,prices)=>Math.floor(entryPrice(b,prices)/(b.partySize??1));
 export function clearedValue(cleared,prices) {
-  return cleared.reduce((sum,b)=>sum+(b.bossId?prices[priceKey(b.bossId,b.difficulty)]??0:0),0);
+  return cleared.reduce((sum,b)=>sum+entryShare(b,prices),0);
 }

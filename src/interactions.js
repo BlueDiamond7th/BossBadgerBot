@@ -164,7 +164,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         } else if(i.commandName==='보스기록') {
           const r=need(records,'보스 기록'),id=get('캐릭터');
           if(sub==='조회') {const result=await r.view(ctx,id,get('주차')??'current');payload=view.bossRecord(result.record,priceMap(ctx.guildId),{fetched:result.fetched});notice=bossNotice(result.record,`${result.record.week} 주차 보스 기록`);}
-          if(sub==='히스토리') {const h=r.history(ctx,id);payload=view.bossHistory(h,0,priceMap(ctx.guildId));notice={owner:h.character.ownerId,name:h.character.name,what:'보스 히스토리'};}
+          if(sub==='히스토리') {const h=r.history(ctx,id);payload=view.bossHistory(h,0,priceMap(ctx.guildId),h.character.ownerId===ctx.userId);notice={owner:h.character.ownerId,name:h.character.name,what:'보스 히스토리'};}
         } else if(i.commandName==='결정석') {
           const book=need(prices,'결정석 가격');
           if(sub==='가격표') payload=view.priceTable(book.all(ctx.guildId));
@@ -231,7 +231,22 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         }
         if(action==='bhsave') payload=view.bossSaved(need(records,'보스 기록').save(ctx,id,a,Number(b)),priceMap(ctx.guildId));
         if(action==='bhskip') payload=view.bossSkipped(id);
-        if(action==='bhist') payload=view.bossHistory(need(records,'보스 기록').history(ctx,id),Number(a),priceMap(ctx.guildId));
+        if(action==='bhist') {const h=need(records,'보스 기록').history(ctx,id);payload=view.bossHistory(h,Number(a),priceMap(ctx.guildId),h.character.ownerId===ctx.userId);}
+        if(action==='bhweek'||action==='bhedit') {
+          const w=need(records,'보스 기록').week(ctx,id,selected??a);
+          requireRule(w.character.ownerId===ctx.userId,'캐릭터를 등록한 본인만 보스 기록을 편집할 수 있어요.','FORBIDDEN');
+          payload=view.bossWeekEditor(w,priceMap(ctx.guildId));
+        }
+        if(action==='bhboss') {
+          const w=need(records,'보스 기록').week(ctx,id,a);
+          requireRule(w.character.ownerId===ctx.userId,'캐릭터를 등록한 본인만 보스 기록을 편집할 수 있어요.','FORBIDDEN');
+          requireRule((w.week.rev??0)===Number(b),'그 사이 기록이 바뀌었어요. 히스토리를 다시 열어 주세요.','STALE');
+          payload=view.partySizePicker(w,Number(selected),priceMap(ctx.guildId));
+        }
+        if(action==='bhsize') {
+          const index=Number(i.customId.split(':')[5]),w=need(records,'보스 기록').setPartySize(ctx,id,a,Number(b),index,Number(selected)),entry=w.week.cleared[index];
+          payload=view.bossWeekEditor(w,priceMap(ctx.guildId),`**${view.safe(entry.difficulty)} ${view.safe(entry.name)}**을(를) ${entry.partySize}인으로 바꿨어요.`);
+        }
         if(action==='dist') payload=view.distQuestion(service.getParty(ctx,id));
         if(action==='distno') payload={content:'분배할 아이템이 없어 분배 계산을 진행하지 않았어요.',components:[view.backToParty(id)]};
         if(action==='distyes') payload=view.distSellerPicker(service.getParty(ctx,id));
