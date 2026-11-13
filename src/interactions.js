@@ -44,9 +44,16 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
     const shown=view.paginate(s.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner)),page,10).items;
     return view.roster(s,page,owner,eligible,tracker?.latestPowers(ctx,shown.map(c=>c.id))??null);
   }
-  async function respond(i,payload,relocate=false) {
+  async function pushedUp(i) {
+    if(!i.message?.id) return false;
+    try {
+      const latest=await i.channel.messages.fetch({limit:1,cache:false});
+      return [...latest.values()].some(message=>BigInt(message.id)>BigInt(i.message.id));
+    } catch {console.warn('[panel] position-unavailable');return false;}
+  }
+  async function respond(i,payload,privateSource=false) {
     const response={content:null,embeds:[],components:[],allowedMentions:{parse:[]},...payload};
-    if(!relocate) return i.editReply(response);
+    if(!privateSource||!await pushedUp(i)) return i.editReply(response);
     // Keep the old panel until the new private message has been delivered.
     const message=await i.followUp({...response,flags:MessageFlags.Ephemeral});
     await i.deleteReply().catch(()=>console.warn('[panel] delete-failed'));

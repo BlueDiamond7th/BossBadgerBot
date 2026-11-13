@@ -20,6 +20,12 @@ function fake(type,properties={}) {
     async deleteReply(){this.deleted=true;},async editReply(payload){this.outputs.push(payload);},async reply(payload){this.replied=true;this.outputs.push(payload);},async followUp(payload){this.outputs.push(payload);},async showModal(payload){this.replied=true;this.outputs.push(payload);},async respond(payload){this.responded=true;this.outputs.push(payload);},...properties};
 }
 function command(root,sub,values={}) {return fake('command',{commandName:root,options:{getSubcommand:()=>sub,getString:name=>values[name]??null,getBoolean:name=>values[name]??null,getUser:name=>values[name]??null}});}
+function privatePanel(latestId='9007199254740993') {
+  return {message:{id:'9007199254740992',flags:{has:()=>true}},channel:{id:'t',isThread:()=>true,messages:{async fetch(options){
+    assert.deepEqual(options,{limit:1,cache:false});
+    return new Map(latestId?[[latestId,{id:latestId}]]:[]);
+  }}}};
+}
 function setup(t,verifyContext=async()=>({...context})) {
   const repo=new Repository(':memory:');t.after(()=>repo.close());const service=new PartyService(repo);
   const connections=new PersonalConnections({repository:repo,service,encryptionKey:Buffer.alloc(32,1).toString('base64'),clientFactory:()=>({listCharacters:async()=>[{ocid:'test-ocid',name:'도토리',world:'루나',job:'히어로',level:280}],combatPower:async()=> '123456789',close(){}})});
@@ -127,30 +133,43 @@ test('shared party query publishes a read card and removes private acknowledgeme
   assert.equal(i.deleted,true);assert.equal(i.outputs[0].flags,undefined);
   assert.equal(i.outputs.at(-1).components[0].toJSON().components[0].custom_id,`mp:detail:${p.id}`);
 });
-test('private modal submission sends a new private panel and removes the old one',async t=>{
+test('private modal submission moves a displaced panel to the bottom',async t=>{
   const {service,handler}=setup(t);service.start(context,'start');let updates=0,replies=0;
-  const i=fake('modal',{customId:'mp:modal:apikey',fields:{getTextInputValue:()=> 'test-key-'.repeat(8)},async deferUpdate(){updates++;this.deferred=true;},async deferReply(){replies++;this.deferred=true;}});
+  const i=fake('modal',{...privatePanel(),customId:'mp:modal:apikey',fields:{getTextInputValue:()=> 'test-key-'.repeat(8)},async deferUpdate(){updates++;this.deferred=true;},async deferReply(){replies++;this.deferred=true;}});
   await handler(i);assert.equal(updates,1);assert.equal(replies,0);assert.equal(i.deleted,true);assert.equal(i.outputs[0].flags,MessageFlags.Ephemeral);assert.equal(service.snapshot(context).characters.length,0);assert.match(i.outputs[0].content,/등록할 캐릭터/);
 });
-test('private navigation delivers a private panel at the bottom before deleting its source',async t=>{
+test('private navigation moves a displaced panel before deleting its source',async t=>{
   const {service,handler}=setup(t);service.start(context,'start');
   for(const type of ['button','select']) {
     const events=[];
-    const i=fake(type,{customId:'mp:roster:all:0',async deferUpdate(){events.push('defer');this.deferred=true;},
+    const i=fake(type,{...privatePanel(),customId:'mp:roster:all:0',async deferUpdate(){events.push('defer');this.deferred=true;},
       async followUp(payload){events.push('send');assert.equal(payload.flags,MessageFlags.Ephemeral);assert.deepEqual(payload.allowedMentions,{parse:[]});this.outputs.push(payload);},
       async deleteReply(){events.push('delete');},async editReply(){assert.fail('must send a new message');}});
     await handler(i);assert.deepEqual(events,['defer','send','delete']);
     assert.ok(i.outputs[0].components.some(r=>r.toJSON().components.some(c=>c.custom_id==='mp:parties:active:0')));
   }
 });
+test('private navigation keeps its message when no newer channel message exists',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  for(const latestId of [null,'9007199254740991','9007199254740992']) {
+    const i=fake('button',{...privatePanel(latestId),customId:'mp:roster:all:0',async followUp(){assert.fail('must keep the current message');}});
+    await handler(i);assert.equal(i.deleted,undefined);assert.ok(i.outputs[0].embeds.length);
+  }
+});
+test('private navigation keeps its message when channel history cannot be checked',async t=>{
+  const {service,handler}=setup(t);service.start(context,'start');
+  const panel=privatePanel();panel.channel.messages.fetch=async()=>{throw new Error('network');};
+  const i=fake('button',{...panel,customId:'mp:roster:all:0',async followUp(){assert.fail('must keep the current message');}});
+  await handler(i);assert.equal(i.deleted,undefined);assert.ok(i.outputs[0].embeds.length);
+});
 test('failed private delivery does not delete the source message',async t=>{
   const {service,handler}=setup(t);service.start(context,'start');
-  const i=fake('button',{customId:'mp:roster:all:0',async followUp(){throw new Error('network');}});
+  const i=fake('button',{...privatePanel(),customId:'mp:roster:all:0',async followUp(){throw new Error('network');}});
   await handler(i);assert.equal(i.deleted,undefined);assert.match(i.outputs[0].content,/처리하지 못했어요/);
 });
 test('failed source deletion leaves the delivered private panel intact',async t=>{
   const {service,handler}=setup(t);service.start(context,'start');
-  const i=fake('button',{customId:'mp:roster:all:0',async deleteReply(){throw new Error('network');},async editReply(){assert.fail('must not replace the delivered panel with an error');}});
+  const i=fake('button',{...privatePanel(),customId:'mp:roster:all:0',async deleteReply(){throw new Error('network');},async editReply(){assert.fail('must not replace the delivered panel with an error');}});
   await handler(i);assert.equal(i.outputs.length,1);assert.equal(i.outputs[0].flags,MessageFlags.Ephemeral);assert.ok(i.outputs[0].embeds.length);
 });
 
