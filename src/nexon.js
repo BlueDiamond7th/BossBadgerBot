@@ -63,14 +63,18 @@ export class NexonClient {
     requireRule(data.daily!==null||data.weekly!==null||data.bosses!==null,'스케줄러 정보가 아직 제공되지 않아요.','NEXON_NO_SCHEDULER');
     return data;
   }
+  async combatPower(ocid) {
+    const stat=await this.request('character/stat',{ocid});
+    const power=stat.final_stat?.find(s=>s.stat_name==='전투력')?.stat_value;
+    requireRule(typeof power==='string'&&/^\d+$/.test(power),'전투력 정보가 아직 제공되지 않아요.','NEXON_DATA');
+    return power;
+  }
   async collect(name,ocid) {
     if(!ocid) ocid=(await this.request('id',{character_name:name})).ocid;
     requireRule(typeof ocid==='string'&&ocid.length>0,'캐릭터 식별자를 조회하지 못했어요.','NEXON_DATA');
     const basic=await this.request('character/basic',{ocid});
     requireRule(basic.character_name&&basic.world_name&&basic.character_class&&Number.isInteger(basic.character_level),'캐릭터 기본 정보가 아직 제공되지 않아요.','NEXON_DATA');
-    const stat=await this.request('character/stat',{ocid});
-    const power=stat.final_stat?.find(s=>s.stat_name==='전투력')?.stat_value;
-    requireRule(typeof power==='string'&&/^\d+$/.test(power),'전투력 정보가 아직 제공되지 않아요.','NEXON_DATA');
+    const power=await this.combatPower(ocid);
     const gear=await this.request('character/item-equipment',{ocid});
     requireRule(Array.isArray(gear.item_equipment),'장비 정보가 아직 제공되지 않아요.','NEXON_DATA');
     const equipment={};

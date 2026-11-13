@@ -22,7 +22,7 @@ function fake(type,properties={}) {
 function command(root,sub,values={}) {return fake('command',{commandName:root,options:{getSubcommand:()=>sub,getString:name=>values[name]??null,getBoolean:name=>values[name]??null,getUser:name=>values[name]??null}});}
 function setup(t,verifyContext=async()=>({...context})) {
   const repo=new Repository(':memory:');t.after(()=>repo.close());const service=new PartyService(repo);
-  const connections=new PersonalConnections({repository:repo,service,encryptionKey:Buffer.alloc(32,1).toString('base64'),clientFactory:()=>({listCharacters:async()=>[{ocid:'test-ocid',name:'도토리',world:'루나',job:'히어로',level:280}],close(){}})});
+  const connections=new PersonalConnections({repository:repo,service,encryptionKey:Buffer.alloc(32,1).toString('base64'),clientFactory:()=>({listCharacters:async()=>[{ocid:'test-ocid',name:'도토리',world:'루나',job:'히어로',level:280}],combatPower:async()=> '123456789',close(){}})});
   const handler=createHandler({service,connections,guildId:'g',verifyContext,resolveOwners:async()=>new Set(['u1','u2'])});return {service,handler,connections};
 }
 test('full Discord command and persistent button flow creates party, character and boss',async t=>{
@@ -31,6 +31,7 @@ test('full Discord command and persistent button flow creates party, character a
   await handler(fake('modal',{customId:'mp:modal:apikey',fields:{getTextInputValue:()=> 'test-key-'.repeat(8)}}));
   assert.equal(service.snapshot(context).characters.length,0);
   const draft=[...connections.selections.values()][0];
+  assert.equal(draft.items[0].combatPower,'123456789');
   const chooseCharacters=fake('select',{customId:`mp:charselect:${draft.id}:0`,values:draft.items.map(c=>c.value)});await handler(chooseCharacters);
   assert.equal(service.snapshot(context).characters.length,0);
   await handler(fake('button',{customId:`mp:charcomplete:${draft.id}`}));

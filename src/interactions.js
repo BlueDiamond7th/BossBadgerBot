@@ -30,8 +30,9 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
     const row=connections.row(ctx);requireRule(row,'연결된 API 키가 없어요.');
     return view.disconnectConfirmation(row.version);
   }
-  function imported(ctx,result) {
-    const payload=view.characterSelection(connections.beginSelection(ctx,'add'));
+  async function imported(ctx,result) {
+    const draft=connections.beginSelection(ctx,'add');
+    const payload=view.characterSelection(await connections.loadSelectionPage(ctx,draft.id));
     return {...payload,content:`${result.cached?'최근 계정 목록을 사용해요.':'계정 목록을 갱신했어요.'} 새 캐릭터는 자동 등록하지 않아요.\n${payload.content}`};
   }
   function scheduler(ctx,id,index=0,page=0) {
@@ -114,7 +115,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         } else if(i.commandName==='캐릭터') {
           if(sub==='연결'||sub==='등록') payload=connection(ctx);
           if(sub==='연결해제') payload=disconnect(ctx);
-          if(sub==='동기화') {connection(ctx);payload=imported(ctx,await connections.refresh(ctx));changed=true;onConnectionChanged();}
+          if(sub==='동기화') {connection(ctx);payload=await imported(ctx,await connections.refresh(ctx));changed=true;onConnectionChanged();}
           if(sub==='스케줄러') payload=scheduler(ctx,get('캐릭터'));
           if(sub==='스케줄러갱신') {requireRule(tracker,'스케줄러 기능을 사용할 수 없어요.');const result=await tracker.syncScheduler(ctx,get('캐릭터'));payload=scheduler(ctx,get('캐릭터'));if(result.cached)payload.content='5분 이내 수집한 기록을 보여드려요.';}
           if(sub==='목록') {
@@ -154,7 +155,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         }
       } else if(i.isModalSubmit()) {
         if(i.customId==='mp:modal:register') payload=connection(ctx);
-        if(i.customId==='mp:modal:apikey') {connection(ctx);payload=imported(ctx,await connections.connect(ctx,i.fields.getTextInputValue('apikey')));changed=true;onConnectionChanged();}
+        if(i.customId==='mp:modal:apikey') {connection(ctx);payload=await imported(ctx,await connections.connect(ctx,i.fields.getTextInputValue('apikey')));changed=true;onConnectionChanged();}
         if(i.customId==='mp:modal:create') {const p=service.createParty(ctx,i.fields.getTextInputValue('name'),rid);changed=true;payload=await detail(ctx,i,p.id);}
         const [,,kind,id,seller]=i.customId.split(':');
         if(kind==='dist') {
@@ -171,10 +172,10 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         const [prefix,action,id,a,b]=i.customId.split(':');requireRule(prefix==='mp','지원하지 않는 동작이에요.');
         const selected=i.values?.[0];
         if(action==='register') payload=connection(ctx);
-        if(action==='charadd'||action==='charremove') {connection(ctx);payload=view.characterSelection(connections.beginSelection(ctx,action==='charadd'?'add':'remove'));}
-        if(action==='charpage'||action==='charselect') {connection(ctx);const page=Number(a),draft=connections.selection(ctx,id,page,action==='charselect'?i.values:null);payload=view.characterSelection(draft,page);}
+        if(action==='charadd'||action==='charremove') {connection(ctx);const draft=connections.beginSelection(ctx,action==='charadd'?'add':'remove');payload=view.characterSelection(await connections.loadSelectionPage(ctx,draft.id));}
+        if(action==='charpage'||action==='charselect') {connection(ctx);const page=Number(a),draft=action==='charselect'?connections.selection(ctx,id,page,i.values):await connections.loadSelectionPage(ctx,id,page);payload=view.characterSelection(draft,page);}
         if(action==='charcomplete') {connection(ctx);const result=connections.completeSelection(ctx,id);changed=true;onConnectionChanged();payload={...connection(ctx),content:result.removed!==undefined?`내 캐릭터 ${result.removed}개를 삭제했어요. 과거 파티·기록은 유지하며 자동 수집을 중단해요.`:`등록 완료: 추가 ${result.added}개 · 갱신 ${result.updated}개 · 이름 충돌 ${result.conflicts}개. 등록한 캐릭터만 자동 수집해요.`};}
-        if(action==='accountsync') {connection(ctx);payload=imported(ctx,await connections.refresh(ctx));changed=true;onConnectionChanged();}
+        if(action==='accountsync') {connection(ctx);payload=await imported(ctx,await connections.refresh(ctx));changed=true;onConnectionChanged();}
         if(action==='disconnectask') payload=disconnect(ctx);
         if(action==='disconnect') {connection(ctx);connections.disconnect(ctx,id);payload={...connection(ctx),content:'내 API 연결을 해제했어요. 키를 삭제하고 자동 추적을 중단했습니다. 기존 캐릭터·파티·기록은 유지됩니다.'};}
         if(action==='schedulerpicker') payload=view.schedulerPicker(service.snapshot(ctx),ctx.userId,Number(id));

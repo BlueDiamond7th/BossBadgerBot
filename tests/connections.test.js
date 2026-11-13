@@ -18,7 +18,7 @@ function setup(t,clientFactory) {
   const repository=new Repository(':memory:');t.after(()=>repository.close());const service=new PartyService(repository);service.start(ctx,'start');
   let now=Date.parse('2026-11-13T05:00:00Z');
   const clients=[];
-  const factory=options=>{const client=clientFactory?clientFactory(options):{listCharacters:async()=>[remote()],scheduler:async()=>scheduler(),collect:async()=>collected(),close(){this.closed=true;}};clients.push(client);return client;};
+  const factory=options=>{const client=clientFactory?clientFactory(options):{listCharacters:async()=>[remote()],scheduler:async()=>scheduler(),combatPower:async()=> '100000000',collect:async()=>collected(),close(){this.closed=true;}};clients.push(client);return client;};
   const connections=new PersonalConnections({repository,service,encryptionKey,clientFactory:factory,now:()=>now});
   const tracker=new SpecTracker({repository,service,connections,now:()=>now});
   return {repository,service,connections,tracker,clients,advance:ms=>now+=ms};
@@ -210,7 +210,7 @@ test('selection survives page changes and only explicit choices are registered o
   assert.equal(draft.selected.size,2);
   for(let page=0;page<3;page++)views.characterSelection(draft,page).components.forEach(r=>r.toJSON());
   assert.equal(f.connections.completeSelection(ctx,draft.id).added,2);
-  assert.deepEqual(f.service.snapshot(ctx).characters.map(c=>c.name),['캐릭터1','캐릭터26']);
+  assert.deepEqual(new Set(f.service.snapshot(ctx).characters.map(c=>c.name)),new Set([draft.items[1].name,draft.items[26].name]));
   await f.tracker.sweep({guildId:'g'});assert.equal(specCalls,2);assert.equal(schedulerCalls,2);
   f.advance(6*3600_000);await f.connections.refresh(ctx);
   assert.equal(f.service.snapshot(ctx).characters.length,2);
@@ -260,4 +260,59 @@ test('private account candidates survive restart and a disappeared selection can
   const draft=f.connections.beginSelection(ctx);f.connections.selection(ctx,draft.id,0,[draft.items[0].value]);
   items=[];f.advance(6*3600_000);await f.connections.refresh(ctx);
   assert.throws(()=>f.connections.completeSelection(ctx,draft.id),{code:'STALE'});assert.equal(f.service.snapshot(ctx).characters.length,0);
+});
+
+test('add and removal choices sort by descending level with deterministic name ties',async t=>{
+  const items=[{...remote('저레벨','low'),level:200},{...remote('나','b'),level:280},{...remote('고레벨','high'),level:290},{...remote('가','a'),level:280}];
+  const f=setup(t,()=>({listCharacters:async()=>items,close(){}}));await f.connections.connect(ctx,key);
+  assert.deepEqual(f.connections.beginSelection(ctx).items.map(c=>c.name),['고레벨','가','나','저레벨']);
+  selectAll(f.connections);assert.deepEqual(f.connections.beginSelection(ctx,'remove').items.map(c=>c.name),['고레벨','가','나','저레벨']);
+});
+test('combat power reads only the displayed page, caches across restarts and leaves selections intact',async t=>{
+  const calls=[],items=Array.from({length:40},(_,i)=>({...remote(`캐릭터${i}`,`ocid-${i}`),level:300-i}));
+  const factory=()=>({listCharacters:async()=>items,combatPower:async ocid=>{calls.push(ocid);return '123456789';},close(){}});
+  const f=setup(t,factory);await f.connections.connect(ctx,key);assert.equal(calls.length,0);
+  const draft=f.connections.beginSelection(ctx);f.connections.selection(ctx,draft.id,0,[draft.items[0].value]);
+  await f.connections.loadSelectionPage(ctx,draft.id);assert.equal(calls.length,25);assert.ok(!calls.includes('ocid-25'));
+  const payload=views.characterSelection(draft),options=payload.components[0].toJSON().components[0].options;
+  assert.equal(options[0].label,'Lv.300 캐릭터0 · 전투력 123,456,789');
+  assert.equal(options[0].default,true);assert.equal(draft.selected.size,1);
+  await f.connections.loadSelectionPage(ctx,draft.id);assert.equal(calls.length,25);
+  const resumed=new PersonalConnections({repository:f.repository,service:f.service,encryptionKey,clientFactory:factory,now:f.tracker.now});
+  await resumed.loadSelectionPage(ctx,resumed.beginSelection(ctx).id);assert.equal(calls.length,25);
+  await f.connections.loadSelectionPage(ctx,draft.id,1);assert.equal(calls.length,40);
+  assert.equal(f.connections.completeSelection(ctx,draft.id).added,1);
+  f.advance(3600_000);const next=f.connections.beginSelection(ctx);await f.connections.loadSelectionPage(ctx,next.id);assert.equal(calls.length,65);
+});
+test('missing power remains selectable, exhausted budgets stop lookups and disconnect removes the cache',async t=>{
+  let calls=0;const f=setup(t,()=>({listCharacters:async()=>[remote('A','a'),remote('B','b'),remote('C','c')],combatPower:async()=>{
+    calls++;if(calls===1)return '0';throw Object.assign(new Error('quota'),{code:'NEXON_BUDGET'});
+  },close(){}}));
+  await f.connections.connect(ctx,key);const draft=f.connections.beginSelection(ctx);await f.connections.loadSelectionPage(ctx,draft.id);
+  assert.equal(calls,2);const options=views.characterSelection(draft).components[0].toJSON().components[0].options;
+  assert.match(options[0].label,/전투력 0$/);assert.match(options[1].label,/조회 불가/);assert.match(options[2].label,/조회 불가/);
+  f.connections.selection(ctx,draft.id,0,[draft.items[2].value]);assert.equal(f.connections.completeSelection(ctx,draft.id).added,1);
+  f.connections.disconnect(ctx);assert.equal(f.repository.db.prepare('SELECT count(*) AS n FROM personal_selection_power').get().n,0);
+});
+test('an unavailable character power does not prevent looking up the next character',async t=>{
+  const f=setup(t,()=>({listCharacters:async()=>[remote('A','a'),remote('B','b')],combatPower:async ocid=>{
+    if(ocid==='a')throw Object.assign(new Error('missing'),{code:'NEXON_DATA'});return '9007199254740993';
+  },close(){}}));
+  await f.connections.connect(ctx,key);const draft=f.connections.beginSelection(ctx);await f.connections.loadSelectionPage(ctx,draft.id);
+  const options=views.characterSelection(draft).components[0].toJSON().components[0].options;
+  assert.match(options[0].label,/조회 불가/);assert.match(options[1].label,/9,007,199,254,740,993/);
+});
+test('disconnect during power lookup prevents stale cache writes',async t=>{
+  let release;const f=setup(t,()=>({listCharacters:async()=>[remote()],combatPower:()=>new Promise(resolve=>release=()=>resolve('123')),close(){}}));
+  await f.connections.connect(ctx,key);const draft=f.connections.beginSelection(ctx),work=f.connections.loadSelectionPage(ctx,draft.id);
+  f.connections.disconnect(ctx);release();await assert.rejects(()=>work,{code:'KEY_CHANGED'});
+  assert.equal(f.repository.db.prepare('SELECT count(*) AS n FROM personal_selection_power').get().n,0);
+});
+test('power-only lookup calls stats once and validates power without collecting equipment or skills',async()=>{
+  const calls=[];let power='123456789';const api=new NexonClient({apiKey:key,sleep:async()=>{},fetchImpl:async url=>{
+    calls.push(url);return {ok:true,json:async()=>({final_stat:[{stat_name:'전투력',stat_value:power}]})};
+  }});
+  assert.equal(await api.combatPower('private-ocid'),'123456789');assert.equal(calls.length,1);
+  assert.ok(calls[0].pathname.endsWith('/character/stat'));assert.equal(calls[0].searchParams.get('ocid'),'private-ocid');
+  power='unknown';await assert.rejects(()=>api.combatPower('private-ocid'),{code:'NEXON_DATA'});
 });

@@ -28,7 +28,7 @@ export class KeyVault {
 
 export class PersonalConnections {
   constructor({repository,service,encryptionKey='',now=()=>Date.now(),clientFactory=options=>new NexonClient(options)}) {
-    this.repo=repository;this.service=service;this.now=now;this.vault=new KeyVault(encryptionKey);this.factory=clientFactory;this.clients=new Map();this.pending=new Map();this.gates=new Map();this.stopped=false;this.selections=new Map();
+    this.repo=repository;this.service=service;this.now=now;this.vault=new KeyVault(encryptionKey);this.factory=clientFactory;this.clients=new Map();this.pending=new Map();this.gates=new Map();this.stopped=false;this.selections=new Map();this.powerInflight=new Map();
     repository.db.exec(`CREATE TABLE IF NOT EXISTS personal_connections (
       guild_id TEXT NOT NULL,thread_id TEXT NOT NULL,user_id TEXT NOT NULL,
       sealed_key TEXT NOT NULL,fingerprint TEXT NOT NULL,version TEXT NOT NULL,imported_at INTEGER NOT NULL,
@@ -40,6 +40,10 @@ export class PersonalConnections {
       CREATE TABLE IF NOT EXISTS personal_candidates (
       guild_id TEXT NOT NULL,thread_id TEXT NOT NULL,user_id TEXT NOT NULL,sealed_list TEXT NOT NULL,
       PRIMARY KEY(guild_id,thread_id,user_id));
+      CREATE TABLE IF NOT EXISTS personal_selection_power (
+      guild_id TEXT NOT NULL,thread_id TEXT NOT NULL,user_id TEXT NOT NULL,identity_hash TEXT NOT NULL,
+      combat_power TEXT NOT NULL,collected_at INTEGER NOT NULL,
+      PRIMARY KEY(guild_id,thread_id,user_id,identity_hash));
       CREATE TABLE IF NOT EXISTS personal_api_budget (
       fingerprint TEXT NOT NULL,day TEXT NOT NULL,calls INTEGER NOT NULL,PRIMARY KEY(fingerprint,day));`);
   }
@@ -106,8 +110,14 @@ export class PersonalConnections {
     const version=this.row(ctx)?.version??null,state=this.service.snapshot(ctx);
     if(mode==='add')requireRule(version,'먼저 내 API 키를 연결해 주세요.','KEY_MISSING');
     const own=state.characters.filter(c=>c.ownerId===ctx.userId&&c.active);
-    const bound=new Set(this.repo.db.prepare('SELECT character_id,identity_hash FROM personal_characters WHERE guild_id=? AND thread_id=? AND user_id=?').all(...args(ctx)).filter(b=>own.some(c=>c.id===b.character_id)).map(b=>b.identity_hash));
-    const items=mode==='remove'?own.map(c=>({...c,value:c.id})):this.candidates(ctx).filter(c=>!bound.has(this.vault.fingerprint(c.ocid))).map(({ocid,...c})=>({...c,value:this.vault.fingerprint(ocid)}));
+    const bindings=this.repo.db.prepare('SELECT character_id,identity_hash FROM personal_characters WHERE guild_id=? AND thread_id=? AND user_id=?').all(...args(ctx));
+    const bound=new Set(bindings.filter(b=>own.some(c=>c.id===b.character_id)).map(b=>b.identity_hash));
+    const candidates=this.candidates(ctx),byHash=new Map(candidates.map(c=>[this.vault.fingerprint(c.ocid),c]));
+    const items=mode==='remove'?own.map(c=>{
+      const remote=byHash.get(bindings.find(b=>b.character_id===c.id)?.identity_hash);
+      return {...c,level:remote?.level??null,value:c.id};
+    }):candidates.filter(c=>!bound.has(this.vault.fingerprint(c.ocid))).map(({ocid,...c})=>({...c,value:this.vault.fingerprint(ocid)}));
+    items.sort((a,b)=>(b.level??-1)-(a.level??-1)||a.name.localeCompare(b.name,'ko')||(a.world??'').localeCompare(b.world??'','ko'));
     for(const [id,draft] of this.selections)if(this.now()-draft.createdAt>30*60_000||draft.scope===scope(ctx))this.selections.delete(id);
     const draft={id:randomUUID(),scope:scope(ctx),version,mode,items,selected:new Set(),createdAt:this.now()};
     this.selections.set(draft.id,draft);return draft;
@@ -124,6 +134,38 @@ export class PersonalConnections {
       for(const v of values)draft.selected.add(v);
     }
     return draft;
+  }
+  async loadSelectionPage(ctx,id,page=0) {
+    const draft=this.selection(ctx,id,page),row=this.row(ctx);
+    if(!row)return draft;
+    const candidates=new Map(this.candidates(ctx).map(c=>[this.vault.fingerprint(c.ocid),c]));
+    const bindings=new Map(this.repo.db.prepare('SELECT character_id,identity_hash FROM personal_characters WHERE guild_id=? AND thread_id=? AND user_id=?').all(...args(ctx)).map(b=>[b.character_id,b.identity_hash]));
+    for(const item of draft.items.slice(page*25,(page+1)*25)) {
+      const hash=draft.mode==='add'?item.value:bindings.get(item.value),remote=candidates.get(hash);
+      if(!remote)continue;
+      const cached=this.repo.db.prepare('SELECT combat_power,collected_at FROM personal_selection_power WHERE guild_id=? AND thread_id=? AND user_id=? AND identity_hash=?').get(...args(ctx),hash);
+      if(cached&&this.now()-cached.collected_at<3600_000) {item.combatPower=cached.combat_power;continue;}
+      const key=`${scope(ctx)}:${draft.version}:${hash}`;
+      try {
+        let work=this.powerInflight.get(key);
+        if(!work) {
+          const session=this.connectionSession(ctx);
+          work=(async()=>{
+            const power=await session.api.combatPower(remote.ocid);session.assertCurrent();
+            requireRule(typeof power==='string'&&/^\d+$/.test(power),'전투력 정보를 확인하지 못했어요.','NEXON_DATA');
+            this.repo.db.prepare('INSERT INTO personal_selection_power VALUES(?,?,?,?,?,?) ON CONFLICT(guild_id,thread_id,user_id,identity_hash) DO UPDATE SET combat_power=excluded.combat_power,collected_at=excluded.collected_at').run(...args(ctx),hash,power,this.now());
+            return power;
+          })();
+          this.powerInflight.set(key,work);
+        }
+        item.combatPower=await work;
+      } catch(error) {
+        if(['KEY_CHANGED','NEXON_STOPPED'].includes(error.code))throw error;
+        item.combatPower=null;
+        if(error.code==='NEXON_BUDGET')break;
+      } finally {this.powerInflight.delete(key);}
+    }
+    this.selection(ctx,id,page);return draft;
   }
   completeSelection(ctx,id) {
     const draft=this.selection(ctx,id);
@@ -179,6 +221,7 @@ export class PersonalConnections {
     try {
       db.prepare('DELETE FROM personal_characters WHERE guild_id=? AND thread_id=? AND user_id=?').run(...args(ctx));
       db.prepare('DELETE FROM personal_candidates WHERE guild_id=? AND thread_id=? AND user_id=?').run(...args(ctx));
+      db.prepare('DELETE FROM personal_selection_power WHERE guild_id=? AND thread_id=? AND user_id=?').run(...args(ctx));
       db.prepare('DELETE FROM personal_connections WHERE guild_id=? AND thread_id=? AND user_id=?').run(...args(ctx));db.exec('COMMIT');
     } catch(error) {db.exec('ROLLBACK');throw error;}
   }
