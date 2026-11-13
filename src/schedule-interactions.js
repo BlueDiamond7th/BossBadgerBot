@@ -68,6 +68,7 @@ export function createScheduleInteractions({schedules,resolveOwners}) {
         if(action==='retry'){book.retryDelivery(ctx,id,version,i.id);payload={content:'알림 재전송을 예약했어요.'};changed=true;}
       }
       if(changed&&!scheduleId){const parts=i.customId.split(':');scheduleId=parts[1]==='modal'?parts[3]:parts[2];}
+      if(payload&&!payload.components)payload.components=[ui.home()];
       requireRule(payload,'지원하지 않는 일정 동작이에요. 최신 화면을 다시 열어 주세요.');return {payload,changed,scheduleId};
     },
   };

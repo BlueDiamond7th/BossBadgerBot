@@ -1,4 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown } from 'discord.js';
+import { home as mainNavigation } from './views.js';
 import { scheduleDate } from './schedule.js';
 import { bossById } from './catalog.js';
 const safe=s=>escapeMarkdown(String(s??'')).replace(/@/g,'＠');
@@ -6,7 +7,7 @@ const row=(...v)=>new ActionRowBuilder().addComponents(...v);
 const btn=(id,label,style=ButtonStyle.Secondary,disabled=false)=>new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style).setDisabled(disabled);
 const embed=()=>new EmbedBuilder().setColor(0x46745b);
 const names=(s,states)=>s.members.filter(m=>states.includes(s.responses[m.userId]?.state??'missing')).map(m=>safe(m.name)).join(', ').slice(0,550)||'-';
-const home=()=>row(btn('mp:board','보스방'),btn('mp:roster:all:0','캐릭터'),btn('mp:parties:active:0','파티'),btn('sc:list:0','일정 목록'),btn('sc:mine:0','내 일정'));
+export const home=()=>mainNavigation().addComponents(btn('sc:list:0','일정 목록'),btn('sc:mine:0','내 일정'));
 const bossNames=bosses=>bosses.map(b=>`${safe(b.difficulty)} ${safe(bossById(b.bossId)?.name??b.bossId)}`).join(' / ').slice(0,650)||'보스 없음';
 export const scheduleSummary=s=>`${scheduleDate(s.startAt)} · ${s.partyName}${s.status==='poll'?' (시간 투표)':s.status==='review'?' (검토 필요)':''}`;
 export function scheduleCard(s,book,now=book.now()) {
@@ -31,7 +32,7 @@ export function scheduleCard(s,book,now=book.now()) {
   if(ended||s.startAt<=now)controls=row(btn('sc:mine:0','내 다음 일정'),btn(`sc:open:${s.id}`,'이력 보기'));
   else if(s.status==='poll')controls=row(btn(`sc:vote:${s.id}:${s.version}`,'투표하기',ButtonStyle.Primary,s.deadline<=now),btn('sc:mine:0','내 일정'),btn(`sc:manage:${s.id}`,'관리'));
   else controls=row(btn(`sc:attend:${s.id}:${s.version}:yes`,'참석',ButtonStyle.Success,s.status!=='confirmed'),btn(`sc:attend:${s.id}:${s.version}:no`,'이번엔 불참',ButtonStyle.Danger,s.status!=='confirmed'),btn(`sc:attend:${s.id}:${s.version}:maybe`,'미정',ButtonStyle.Secondary,s.status!=='confirmed'),btn(`sc:personal:${s.id}`,'내 일정'),btn(`sc:manage:${s.id}`,'관리'));
-  return {embeds:[emb],components:[controls],allowedMentions:{parse:[]}};
+  return {embeds:[emb],components:[controls,mainNavigation().addComponents(btn('sc:list:0','일정 목록'))],allowedMentions:{parse:[]}};
 }
 export function scheduleList(items,{mine=false,page=0,offset=0,past=false,partyId=null}={}) {
   const pages=Math.max(1,Math.ceil(items.length/8)),p=Math.max(0,Math.min(Number(page)||0,pages-1)),shown=items.slice(p*8,p*8+8);
@@ -58,29 +59,29 @@ export function schedulePreview(d,p,conflicts=[],members=[]) {
   if(d.reason)lines.push(`확인 사유: ${safe(d.reason)}`);
   return {content:'날짜·요일과 인원·보스를 확인한 뒤 게시하세요.',embeds:[embed().setTitle(`${safe(p.name)} · 일정 미리보기`).setDescription(lines.join('\n').slice(0,3900))],components:[row(btn(`sc:post:${d.id}`,'게시',ButtonStyle.Primary),btn(`sc:draftrepeat:${d.id}`,d.repeat?'매주 반복 중':'이번 한 번'),btn(`sc:draftreminder:${d.id}`,'알림 변경'),btn(`sc:draftbosses:${d.id}`,'보스 선택')),row(btn(`sc:draftreason:${d.id}`,'충돌 확인 사유'),btn(`sc:new:${p.id}:${d.mode}`,'시간 다시 입력')),home()],allowedMentions:{parse:[]}};
 }
-export function scheduleBossPicker(d,p) {return {content:'이번 일정에서 갈 보스를 선택하세요.',embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`sc:setbosses:${d.id}`).setMinValues(1).setMaxValues(p.bosses.length).addOptions(p.bosses.map(b=>({label:`${b.difficulty} ${bossById(b.bossId)?.name??b.bossId}`.slice(0,100),value:b.bossId,default:d.bosses.some(x=>x.bossId===b.bossId)}))))]};}
+export function scheduleBossPicker(d,p) {return {content:'이번 일정에서 갈 보스를 선택하세요.',embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`sc:setbosses:${d.id}`).setMinValues(1).setMaxValues(p.bosses.length).addOptions(p.bosses.map(b=>({label:`${b.difficulty} ${bossById(b.bossId)?.name??b.bossId}`.slice(0,100),value:b.bossId,default:d.bosses.some(x=>x.bossId===b.bossId)})))),home()]};}
 export function scheduleVote(s,userId) {
   const old=s.votes[userId]?.values??[];
-  return {content:'가능한 시간을 모두 선택하면 바로 저장돼요. 선택하지 않은 후보는 불가로 저장합니다.',embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`sc:savevote:${s.id}:${s.version}`).setPlaceholder('가능한 시간을 선택해 저장').setMinValues(0).setMaxValues(s.candidates.length).addOptions(s.candidates.map(c=>({label:scheduleDate(c.at),value:c.id,default:old.includes(c.id)})))),row(btn(`sc:allvote:${s.id}:${s.version}:yes`,'전부 가능',ButtonStyle.Success),btn(`sc:allvote:${s.id}:${s.version}:no`,'전부 불가',ButtonStyle.Danger)),row(btn(`sc:open:${s.id}`,'일정으로 돌아가기'))],allowedMentions:{parse:[]}};
+  return {content:'가능한 시간을 모두 선택하면 바로 저장돼요. 선택하지 않은 후보는 불가로 저장합니다.',embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`sc:savevote:${s.id}:${s.version}`).setPlaceholder('가능한 시간을 선택해 저장').setMinValues(0).setMaxValues(s.candidates.length).addOptions(s.candidates.map(c=>({label:scheduleDate(c.at),value:c.id,default:old.includes(c.id)})))),row(btn(`sc:allvote:${s.id}:${s.version}:yes`,'전부 가능',ButtonStyle.Success),btn(`sc:allvote:${s.id}:${s.version}:no`,'전부 불가',ButtonStyle.Danger)),row(btn(`sc:open:${s.id}`,'일정으로 돌아가기')),home()],allowedMentions:{parse:[]}};
 }
 export function schedulePersonal(s,ctx,book={now:()=>Date.now(),tally:()=>[]}) {
-  return {...scheduleCard(s,book),content:s.exception?'이번 회차만 변경된 시간이에요. 정기 참석 동의는 원래 시간의 회차에서 설정해 주세요.':'참석 버튼은 이번 회차만 적용됩니다. 정기 참석은 아래에서 직접 동의하거나 해제하세요.',components:[row(btn(`sc:regular:${s.id}:${s.version}:on`,'매주 이 시간 참석',ButtonStyle.Success,!s.seriesId||s.status!=='confirmed'||Boolean(s.exception)),btn(`sc:regular:${s.id}:${s.version}:off`,'정기 참석 해제',ButtonStyle.Secondary,!s.seriesId),btn(`sc:open:${s.id}`,'일정 보기'))]};
+  return {...scheduleCard(s,book),content:s.exception?'이번 회차만 변경된 시간이에요. 정기 참석 동의는 원래 시간의 회차에서 설정해 주세요.':'참석 버튼은 이번 회차만 적용됩니다. 정기 참석은 아래에서 직접 동의하거나 해제하세요.',components:[row(btn(`sc:regular:${s.id}:${s.version}:on`,'매주 이 시간 참석',ButtonStyle.Success,!s.seriesId||s.status!=='confirmed'||Boolean(s.exception)),btn(`sc:regular:${s.id}:${s.version}:off`,'정기 참석 해제',ButtonStyle.Secondary,!s.seriesId),btn(`sc:open:${s.id}`,'일정 보기')),home()]};
 }
 export function scheduleManage(s,p,ctx,issues=[]) {
-  const can=p.creatorId===ctx.userId||ctx.isManager;if(!can)return {content:'일정 관리는 파티 생성자 또는 채널/스레드 관리자가 할 수 있어요.',components:[row(btn(`sc:personal:${s.id}`,'내 응답 설정'))]};
+  const can=p.creatorId===ctx.userId||ctx.isManager;if(!can)return {content:'일정 관리는 파티 생성자 또는 채널/스레드 관리자가 할 수 있어요.',components:[row(btn(`sc:personal:${s.id}`,'내 응답 설정')),home()]};
   const options=[...(s.status==='poll'?[]:[{label:'시간 변경 · 이번 회차만',value:'edit'}]),{label:'시간 다시 투표',value:'repoll'},{label:'현재 파티 구성 적용',value:'composition'},{label:'미응답자에게 알림',value:'nudge'},{label:'이번 회차 취소',value:'cancel'},{label:'공개 카드 다시 게시',value:'repost'}];
   if(s.status==='poll'||s.status==='review')options.unshift({label:'시간 확정',value:'confirm'});
   if(s.seriesId){if(s.status!=='poll')options.push({label:'이번 회차와 이후 시간 변경',value:'editfuture'});options.push({label:'이번 회차와 이후 중단',value:'stop'});}
   if(issues.length)options.push({label:'실패·미확인 알림 다시 보내기',value:'retry'});
-  return {content:`**${safe(s.partyName)}** · 관리할 항목을 선택하세요.${issues.length?`\n⚠️ ${issues.map(i=>safe(i.error)).join('\n')}`:''}`,embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`sc:operation:${s.id}:${s.version}`).addOptions(options)),row(btn(`sc:open:${s.id}`,'일정 보기'))],allowedMentions:{parse:[]}};
+  return {content:`**${safe(s.partyName)}** · 관리할 항목을 선택하세요.${issues.length?`\n⚠️ ${issues.map(i=>safe(i.error)).join('\n')}`:''}`,embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`sc:operation:${s.id}:${s.version}`).addOptions(options)),row(btn(`sc:open:${s.id}`,'일정 보기')),home()],allowedMentions:{parse:[]}};
 }
-export function scheduleRetry(s) {return {content:'전송 결과가 불명확한 알림은 이미 도착했을 수도 있어요. 중복 안내 가능성을 확인한 뒤 다시 보낼까요?',embeds:[],components:[row(btn(`sc:retry:${s.id}:${s.version}`,'확인 후 다시 보내기',ButtonStyle.Primary),btn(`sc:manage:${s.id}`,'돌아가기'))]};}
+export function scheduleRetry(s) {return {content:'전송 결과가 불명확한 알림은 이미 도착했을 수도 있어요. 중복 안내 가능성을 확인한 뒤 다시 보낼까요?',embeds:[],components:[row(btn(`sc:retry:${s.id}:${s.version}`,'확인 후 다시 보내기',ButtonStyle.Primary),btn(`sc:manage:${s.id}`,'돌아가기')),home()]};}
 export function scheduleConfirmPicker(s,book) {
-  if(s.status==='review')return {content:'겹치는 일정과 인원을 확인한 뒤 확정하세요.',components:[row(btn(`sc:confirmmodal:${s.id}:${s.version}:review`,'확인 사유 입력 후 확정',ButtonStyle.Primary))]};
+  if(s.status==='review')return {content:'겹치는 일정과 인원을 확인한 뒤 확정하세요.',components:[row(btn(`sc:confirmmodal:${s.id}:${s.version}:review`,'확인 사유 입력 후 확정',ButtonStyle.Primary)),home()]};
   const candidates=book.tally(s).filter(c=>c.at>book.now());
-  if(!candidates.length)return {content:'모든 후보의 출발 시각이 지났어요. 새 시간으로 일정을 다시 잡아 주세요.',components:[row(btn(`sc:start:${s.partyId}`,'일정 다시 잡기'))]};
-  return {content:'확정할 시간을 선택하세요. 불가·미응답 인원과 시간 충돌이 있으면 사유를 입력합니다.',embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`sc:pickconfirm:${s.id}:${s.version}`).addOptions(candidates.map(c=>({label:scheduleDate(c.at),description:`가능 ${c.yes} · 불가 ${c.no} · 미응답 ${c.missing}`,value:c.id}))))]};
+  if(!candidates.length)return {content:'모든 후보의 출발 시각이 지났어요. 새 시간으로 일정을 다시 잡아 주세요.',components:[row(btn(`sc:start:${s.partyId}`,'일정 다시 잡기')),home()]};
+  return {content:'확정할 시간을 선택하세요. 불가·미응답 인원과 시간 충돌이 있으면 사유를 입력합니다.',embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`sc:pickconfirm:${s.id}:${s.version}`).addOptions(candidates.map(c=>({label:scheduleDate(c.at),description:`가능 ${c.yes} · 불가 ${c.no} · 미응답 ${c.missing}`,value:c.id})))),home()]};
 }
 export function scheduleReasonModal(kind,id,version='',candidate='') {return new ModalBuilder().setCustomId(`sc:modal:${kind}:${id}:${version}:${candidate}`).setTitle('확인 사유').addComponents(field('reason','불참·미응답·겹치는 일정을 어떻게 조정했나요?'));}
 export function scheduleEditModal(s,future=false,poll=false) {return new ModalBuilder().setCustomId(`sc:modal:${poll?'repoll':future?'editfuture':'edit'}:${s.id}:${s.version}`).setTitle(poll?'후보 다시 제안':future?'이번 회차와 이후 시간 변경':'이번 회차 시간 변경').addComponents(field('time',poll?'후보 2~5줄 (예: 토 22:00)':'출발 시간 (예: 토 22:00)',new Date(s.startAt+9*3600_000).toISOString().slice(0,16).replace('T',' '),poll),field('duration','예상 소요 시간 (분)',String(s.duration),false,true,3));}
-export function scheduleCancel(s,future,count=1) {return {content:future?`이번 회차와 이후의 미진행 회차 ${count}개를 취소하고 반복을 중단할까요?`:'이번 회차만 취소할까요? 다음 주 일정은 유지됩니다.',embeds:[],components:[row(btn(`sc:cancel:${s.id}:${s.version}:${future?'future':'one'}`,'확인 후 취소',ButtonStyle.Danger),btn(`sc:open:${s.id}`,'돌아가기'))]};}
+export function scheduleCancel(s,future,count=1) {return {content:future?`이번 회차와 이후의 미진행 회차 ${count}개를 취소하고 반복을 중단할까요?`:'이번 회차만 취소할까요? 다음 주 일정은 유지됩니다.',embeds:[],components:[row(btn(`sc:cancel:${s.id}:${s.version}:${future?'future':'one'}`,'확인 후 취소',ButtonStyle.Danger),btn(`sc:open:${s.id}`,'돌아가기')),home()]};}

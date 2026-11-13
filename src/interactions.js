@@ -77,7 +77,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
     if(previous&&previous.id!==message.id&&previous.id!==deletedSource) await previous.remove().catch(()=>console.warn('[panel] previous-delete-failed'));
   }
   async function respond(i,payload,privateSource=false) {
-    const response={content:null,embeds:[],components:[],allowedMentions:{parse:[]},...payload};
+    const response={content:null,embeds:[],components:[view.home()],allowedMentions:{parse:[]},...payload};
     if(!privateSource||!await pushedUp(i)) {
       const message=await i.editReply(response);
       await rememberPanel(i,message);
@@ -302,7 +302,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
           payload=view.bossWeekEditor(w,priceMap(ctx.guildId),`**${view.safe(entry.difficulty)} ${view.safe(entry.name)}**을(를) ${entry.partySize}인으로 바꿨어요.`);
         }
         if(action==='dist') payload=view.distQuestion(service.getParty(ctx,id));
-        if(action==='distno') payload={content:'분배할 아이템이 없어 분배 계산을 진행하지 않았어요.',components:[view.backToParty(id)]};
+        if(action==='distno') payload={content:'분배할 아이템이 없어 분배 계산을 진행하지 않았어요.',components:[view.backToParty(id),view.home()]};
         if(action==='distyes') payload=view.distSellerPicker(service.getParty(ctx,id));
         if(action==='distlist') payload=view.distList(service.getParty(ctx,id,true),need(distributions,'분배').list(ctx,id),Number(a));
         if(action==='distopen') payload=view.distCard(need(distributions,'분배').get(ctx,selected));
@@ -331,12 +331,12 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         if(scheduleWorker)await scheduleWorker.refresh(ctx);
         try {await refreshBoard(i,ctx);} catch(error) {
           console.warn('[board-refresh]',error.code??error.name);
-          await i.followUp({content:'저장은 완료했지만 공용 관리판을 갱신하지 못했어요. 봇의 채널 권한을 확인하고 /보스방 시작을 다시 실행해 주세요.',flags:MessageFlags.Ephemeral,allowedMentions:{parse:[]}}).catch(()=>{});
+          await i.followUp({content:'저장은 완료했지만 공용 관리판을 갱신하지 못했어요. 봇의 채널 권한을 확인하고 /보스방 시작을 다시 실행해 주세요.',flags:MessageFlags.Ephemeral,components:[view.home()],allowedMentions:{parse:[]}}).catch(()=>{});
         }
       }
     } catch(error) {
       console.warn('[interaction]',error.code??error.name);
-      const payload={content:visibleError(error),embeds:[],components:[],allowedMentions:{parse:[]}};
+      const payload={content:visibleError(error),embeds:[],components:[view.home()],allowedMentions:{parse:[]}};
       try {if(i.deferred||i.replied) await respond(i,payload);else await i.reply({...payload,flags:MessageFlags.Ephemeral});} catch { console.warn('[reply] response-unavailable'); }
       // Persisted mutations remain valid even if rendering or Discord delivery failed.
       if(changed) {

@@ -7,7 +7,7 @@ import { clearedValue, entryLimit, entryPrice, entryShare } from './records.js';
 export const safe=value=>escapeMarkdown(String(value)).replace(/@/g,'＠');
 export const button=(id,label,style=ButtonStyle.Secondary,disabled=false)=>new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style).setDisabled(disabled);
 const row=(...items)=>new ActionRowBuilder().addComponents(...items);
-const home=()=>row(button('mp:board','보스방'),button('mp:roster:all:0','캐릭터'),button('mp:parties:active:0','파티'));
+export const home=()=>row(button('mp:board','보스방'),button('mp:roster:all:0','캐릭터'),button('mp:parties:active:0','파티'));
 const base=()=>new EmbedBuilder().setColor(0x46745b);
 const truncate=(s,max=100)=>String(s).slice(0,max);
 export function paginate(items,page=0,size=15) {
@@ -82,31 +82,31 @@ export function memberPicker(state,p,page=0,remove=false,eligibleOwnerIds=null) 
   const chars=state.characters.filter(c=>remove?p.characterIds.includes(c.id):c.active&&!ownerIds.has(c.ownerId)&&(!eligibleOwnerIds||eligibleOwnerIds.has(c.ownerId)));
   const view=paginate(chars,page,20);const action=remove?'delmember':'addmember';const components=[];
   if(view.items.length) components.push(row(new StringSelectMenuBuilder().setCustomId(`mp:${remove?'removemember':'selectmember'}:${p.id}:${p.version}`).setPlaceholder(remove?'제외할 캐릭터':'추가할 캐릭터').addOptions(view.items.map(c=>({label:truncate(`${c.name} · ${c.world??'월드 미확인'}`),value:c.id,description:truncate(`${c.job??'직업 미확인'} · 등록자 ID ${c.ownerId}`)})))));
-  components.push(row(button(`mp:${action}:${p.id}:${view.page-1}:${p.version}`,'이전',ButtonStyle.Secondary,view.page===0),button(`mp:${action}:${p.id}:${view.page+1}:${p.version}`,'다음',ButtonStyle.Secondary,view.page>=view.pages-1),button(`mp:detail:${p.id}`,'파티로 돌아가기')));
+  components.push(row(button(`mp:${action}:${p.id}:${view.page-1}:${p.version}`,'이전',ButtonStyle.Secondary,view.page===0),button(`mp:${action}:${p.id}:${view.page+1}:${p.version}`,'다음',ButtonStyle.Secondary,view.page>=view.pages-1),button(`mp:detail:${p.id}`,'파티로 돌아가기')),home());
   return {embeds:[base().setTitle(`${safe(p.name)} · 캐릭터 ${remove?'제외':'추가'}`).setDescription(view.items.length?'등록된 목록에서 선택하세요. 한 사람당 한 캐릭터씩 편성해요.':remove?'편성된 캐릭터가 없어요.':'추가할 캐릭터가 없어요. 다른 참가자의 캐릭터 등록을 기다리거나 현재 편성한 캐릭터를 먼저 제외해 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 선택 가능 ${view.total}개`})],components,allowedMentions:{parse:[]}};
 }
 export function bossPicker(p,remove=false) {
   const items=remove?p.bosses.map(x=>bossById(x.bossId)).filter(Boolean):BOSSES.filter(b=>!p.bosses.some(x=>x.bossId===b.id));
   const components=[];
   if(items.length) components.push(row(new StringSelectMenuBuilder().setCustomId(`mp:${remove?'removeboss':'selectboss'}:${p.id}:${p.version}`).setPlaceholder(remove?'제외할 보스':'추가할 보스').addOptions(items.map(b=>({label:b.name,value:b.id})))));
-  components.push(row(button(`mp:detail:${p.id}`,'파티로 돌아가기')));
+  components.push(row(button(`mp:detail:${p.id}`,'파티로 돌아가기')),home());
   return {embeds:[base().setTitle(`${safe(p.name)} · 보스 ${remove?'제외':'추가'}`).setDescription(items.length?'파티에 등록할 보스를 선택하세요.':'선택할 보스가 없어요.').setFooter({text:'초기 보스 목록은 src/catalog.js에서 확장할 수 있어요.'})],components,allowedMentions:{parse:[]}};
 }
 export function difficultyPicker(p,bossId) {
   const b=bossById(bossId);
-  return {content:`**${safe(b.name)}**의 난이도를 선택하세요.`,embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:difficulty:${p.id}:${p.version}:${b.id}`).setPlaceholder('난이도').addOptions(b.difficulties.map(d=>({label:d,value:d})))),row(button(`mp:detail:${p.id}`,'파티로 돌아가기'))],allowedMentions:{parse:[]}};
+  return {content:`**${safe(b.name)}**의 난이도를 선택하세요.`,embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:difficulty:${p.id}:${p.version}:${b.id}`).setPlaceholder('난이도').addOptions(b.difficulties.map(d=>({label:d,value:d})))),row(button(`mp:detail:${p.id}`,'파티로 돌아가기')),home()],allowedMentions:{parse:[]}};
 }
 export function registrationModal() {
   return new ModalBuilder().setCustomId('mp:modal:apikey').setTitle('내 API 키 연결').addComponents(row(new TextInputBuilder().setCustomId('apikey').setLabel('캐릭터를 선택해 등록할 개인 API 키').setPlaceholder('메이플스토리용 API 키 · 채팅에 보내지 마세요').setStyle(TextInputStyle.Short).setRequired(true).setMinLength(20).setMaxLength(512)));
 }
 export function creationModal() {return new ModalBuilder().setCustomId('mp:modal:create').setTitle('새 파티 만들기').addComponents(row(new TextInputBuilder().setCustomId('name').setLabel('파티 이름').setPlaceholder('목요일 본캐팟').setMaxLength(60).setStyle(TextInputStyle.Short).setRequired(true)));}
 export function archiveConfirmation(p) {
-  return {content:`**${safe(p.name)}** 파티를 ${p.archived?'복원':'보관'}할까요? 보관한 파티는 다시 복원할 수 있어요.`,embeds:[],components:[row(button(`mp:confirmarchive:${p.id}:${p.version}:${p.archived?'restore':'store'}`,p.archived?'복원하기':'보관하기',ButtonStyle.Primary),button(`mp:detail:${p.id}`,'취소'))],allowedMentions:{parse:[]}};
+  return {content:`**${safe(p.name)}** 파티를 ${p.archived?'복원':'보관'}할까요? 보관한 파티는 다시 복원할 수 있어요.`,embeds:[],components:[row(button(`mp:confirmarchive:${p.id}:${p.version}:${p.archived?'restore':'store'}`,p.archived?'복원하기':'보관하기',ButtonStyle.Primary),button(`mp:detail:${p.id}`,'취소')),home()],allowedMentions:{parse:[]}};
 }
 
 // A shared card is readable by everyone; editing opens a permission-checked personal panel.
 export function publicParty(payload,id) {
-  return {...payload,components:[row(button(`mp:detail:${id}`,'열기 · 관리'))]};
+  return {...payload,components:[row(button(`mp:detail:${id}`,'열기 · 관리')),home()]};
 }
 
 export function specPicker(state,page=0) {
@@ -155,11 +155,11 @@ export function connectionPanel(status) {
 export function characterSelection(draft,page=0) {
   const list=paginate(draft.items,page,25),removing=draft.mode==='remove',components=[];
   if(list.items.length)components.push(row(new StringSelectMenuBuilder().setCustomId(`mp:charselect:${draft.id}:${list.page}`).setPlaceholder(removing?'삭제할 내 캐릭터 여러 개 선택':'등록할 캐릭터 여러 개 선택').setMinValues(0).setMaxValues(list.items.length).addOptions(list.items.map(c=>({label:truncate(`${c.level!=null?`Lv.${c.level} `:''}${c.name} · 전투력 ${c.combatPower!=null?power(c.combatPower):'조회 불가'}`),description:truncate(`${c.world??'월드 미확인'} · ${c.job??'직업 미확인'}`),value:c.value,default:draft.selected.has(c.value)})))));
-  components.push(pager(`mp:charpage:${draft.id}`,list.page,list.pages),row(button(`mp:charcomplete:${draft.id}`,removing?'선택 캐릭터 삭제':'등록 완료',removing?ButtonStyle.Danger:ButtonStyle.Success,draft.selected.size===0),button('mp:register','취소')));
+  components.push(pager(`mp:charpage:${draft.id}`,list.page,list.pages),row(button(`mp:charcomplete:${draft.id}`,removing?'선택 캐릭터 삭제':'등록 완료',removing?ButtonStyle.Danger:ButtonStyle.Success,draft.selected.size===0),button('mp:register','취소')),home());
   return {content:`${removing?'삭제할 내 캐릭터':'등록할 캐릭터'}를 여러 개 선택한 뒤 **${removing?'선택 캐릭터 삭제':'등록 완료'}**를 눌러 주세요.\n${list.page+1}/${list.pages} 페이지 · 후보 ${list.total}개 · 선택 ${draft.selected.size}개\n전투력 높은 순 · 전투력은 조회 시점 기준이며 1시간 동안 재사용해요.\n페이지를 이동해도 선택은 유지돼요. ${removing?'현재 파티에 편성 중이면 먼저 파티에서 제외해 주세요. 삭제해도 과거 기록은 보존합니다.':'선택 전 계정 목록은 본인에게만 보여요.'}${list.total?'':'\n선택 가능한 캐릭터가 없어요.'}`,embeds:[],components,allowedMentions:{parse:[]}};
 }
 export function disconnectConfirmation(version) {
-  return {content:'이 보스방의 내 API 연결을 해제할까요? 저장된 키와 캐릭터 API 연결 정보를 삭제하고 자동 수집을 중단합니다. 이미 등록한 캐릭터·파티·기록은 유지하며, API 이력에는 보관 기간이 적용됩니다.',embeds:[],components:[row(button(`mp:disconnect:${version}`,'API 연결 해제',ButtonStyle.Danger),button('mp:register','취소'))],allowedMentions:{parse:[]}};
+  return {content:'이 보스방의 내 API 연결을 해제할까요? 저장된 키와 캐릭터 API 연결 정보를 삭제하고 자동 수집을 중단합니다. 이미 등록한 캐릭터·파티·기록은 유지하며, API 이력에는 보관 기간이 적용됩니다.',embeds:[],components:[row(button(`mp:disconnect:${version}`,'API 연결 해제',ButtonStyle.Danger),button('mp:register','취소')),home()],allowedMentions:{parse:[]}};
 }
 export function schedulerPicker(state,userId,page=0) {
   const list=paginate(state.characters.filter(c=>c.active&&c.ownerId===userId),page,25),components=[];
@@ -263,10 +263,10 @@ export function partySizePicker({character,week:w},index,prices) {
 
 // ---- 분배금 ----
 export function distQuestion(p) {
-  return {content:`**${safe(p.name)}** · 분배할 아이템이 있나요?`,embeds:[],components:[row(button(`mp:distyes:${p.id}`,'예',ButtonStyle.Primary),button(`mp:distno:${p.id}`,'아니오')),row(button(`mp:distlist:${p.id}:0`,'분배 기록'),button(`mp:detail:${p.id}`,'파티로 돌아가기'))],allowedMentions:{parse:[]}};
+  return {content:`**${safe(p.name)}** · 분배할 아이템이 있나요?`,embeds:[],components:[row(button(`mp:distyes:${p.id}`,'예',ButtonStyle.Primary),button(`mp:distno:${p.id}`,'아니오')),row(button(`mp:distlist:${p.id}:0`,'분배 기록'),button(`mp:detail:${p.id}`,'파티로 돌아가기')),home()],allowedMentions:{parse:[]}};
 }
 export function distSellerPicker(p) {
-  return {content:`**${safe(p.name)}** · 판매자를 선택하세요. 파티에 캐릭터가 편성된 사람만 선택할 수 있어요.`,embeds:[],components:[row(new UserSelectMenuBuilder().setCustomId(`mp:distseller:${p.id}`).setPlaceholder('판매자 @선택').setMinValues(1).setMaxValues(1)),row(button(`mp:detail:${p.id}`,'취소'))],allowedMentions:{parse:[]}};
+  return {content:`**${safe(p.name)}** · 판매자를 선택하세요. 파티에 캐릭터가 편성된 사람만 선택할 수 있어요.`,embeds:[],components:[row(new UserSelectMenuBuilder().setCustomId(`mp:distseller:${p.id}`).setPlaceholder('판매자 @선택').setMinValues(1).setMaxValues(1)),row(button(`mp:detail:${p.id}`,'취소')),home()],allowedMentions:{parse:[]}};
 }
 export function distModal(customId,record=null) {
   const modal=new ModalBuilder().setCustomId(customId).setTitle(record?'분배 기록 수정':'분배 품목 입력').addComponents(
@@ -290,12 +290,12 @@ export function distCard(record) {
   const emb=base().setTitle(`분배금 계산 결과 · ${safe(record.partyName)}`).setDescription(lines.join('\n'))
     .addFields({name:'계산식',value:formulas.join('\n')})
     .setFooter({text:`n = 파티원 수 ${r.memberCount}명 (판매자 포함)${record.edits?` · 수정 ${record.edits}회`:''} · 품목·거래금·파티원 수 수정은 판매자만`});
-  return {embeds:[emb],components:[row(button(`mp:distedit:${record.id}`,'수정'),button(`mp:distmvp:${record.id}`,record.mvp?'MVP 할인 해제':'MVP 할인 적용',record.mvp?ButtonStyle.Success:ButtonStyle.Secondary))],allowedMentions:{parse:[]}};
+  return {embeds:[emb],components:[row(button(`mp:distedit:${record.id}`,'수정'),button(`mp:distmvp:${record.id}`,record.mvp?'MVP 할인 해제':'MVP 할인 적용',record.mvp?ButtonStyle.Success:ButtonStyle.Secondary)),home()],allowedMentions:{parse:[]}};
 }
 export function distList(p,records,page=0) {
   const view=paginate(records,page,10),components=[];
   if(view.items.length) components.push(row(new StringSelectMenuBuilder().setCustomId('mp:distopen').setPlaceholder('분배 기록 열기').addOptions(view.items.map(r=>({label:truncate(`${r.item} · ${formatMeso(r.price)}`),value:r.id,description:truncate(new Date(r.createdAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',hour12:false}))})))));
-  components.push(pager(`mp:distlist:${p.id}`,view.page,view.pages),row(button(`mp:dist:${p.id}`,'새 분배',ButtonStyle.Primary),button(`mp:detail:${p.id}`,'파티로 돌아가기')));
+  components.push(pager(`mp:distlist:${p.id}`,view.page,view.pages),row(button(`mp:dist:${p.id}`,'새 분배',ButtonStyle.Primary),button(`mp:detail:${p.id}`,'파티로 돌아가기')),home());
   return {embeds:[base().setTitle(`${safe(p.name)} · 분배 기록`).setDescription(view.items.map(r=>`**${safe(r.item)}** · ${formatMeso(r.price)} · 판매자 <@${r.sellerId}>${r.mvp?' · MVP':''}`).join('\n')||'분배 기록이 없어요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}건`})],components,allowedMentions:{parse:[]}};
 }
 export const backToParty=id=>row(button(`mp:detail:${id}`,'파티로 돌아가기'));
