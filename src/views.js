@@ -26,10 +26,10 @@ export function board(state) {
 }
 export const scouterUrl=name=>`https://maplescouter.com/ko/info?name=${encodeURIComponent(name)}`;
 const power=value=>{try {return value!=null&&/^\d+$/.test(String(value))?BigInt(value).toLocaleString('ko-KR'):'미수집';} catch {return '미수집';}};
-// 캐릭터 닉네임 · 월드 - @등록자 / 직업 / 전투력 : #### [환산 사이트]
+// [닉네임](환산 사이트) · 월드 - @등록자 / 직업 / 전투력 : ####
 export function roster(state,page=0,owner='all',eligibleOwnerIds=null,powers=null) {
   const chars=state.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner));const view=paginate(chars,page,10);
-  const lines=view.items.map(c=>`**${safe(c.name)}** · ${safe(c.world??'월드 미확인')} - <@${c.ownerId}>${eligibleOwnerIds&&!eligibleOwnerIds.has(c.ownerId)?' · ⚠️ 현재 참가자 아님':''}\n${safe(c.job??'직업 미확인')} / 전투력 : ${power(powers?.get(c.id))} [환산 사이트](${scouterUrl(c.name)})`);
+  const lines=view.items.map(c=>`[**${safe(c.name)}**](${scouterUrl(c.name)}) · ${safe(c.world??'월드 미확인')} - <@${c.ownerId}>${eligibleOwnerIds&&!eligibleOwnerIds.has(c.ownerId)?' · ⚠️ 현재 참가자 아님':''}\n${safe(c.job??'직업 미확인')} / 전투력 : ${power(powers?.get(c.id))}`);
   return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(lines.join('\n\n')||'등록된 캐릭터가 없어요. 내 API 키 연결을 눌러 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개 · 기존 수동 등록과 API로 불러온 캐릭터가 함께 표시돼요.`})],components:[pager(`mp:roster:${owner}`,view.page,view.pages),row(button('mp:register','캐릭터 추가 / 삭제',ButtonStyle.Primary),button('mp:specpicker:0','스펙 변화'),button('mp:schedulerpicker:0','내 스케줄러')),home()],allowedMentions:{parse:[]}};
 }
 export function partyList(state,page=0,archived=false) {

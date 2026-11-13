@@ -17,13 +17,13 @@ function setup(t) {
 }
 const snapshot=(f,id,at,power)=>f.repository.db.prepare('INSERT INTO spec_snapshots VALUES(?,?,?,?,?,?,?)').run(`${id}-${at}`,'g','t',id,at,'2026-11-13',JSON.stringify({level:280,combatPower:power,equipment:{},skills:{}}));
 
-test('roster lines read "닉네임 · 월드 - @등록자" then "직업 / 전투력 : #### [환산 사이트]"',t=>{
+test('roster lines link the nickname to the scouter site, then show job and combat power',t=>{
   const f=setup(t);
   const a=f.service.register(ctx('u1'),{name:'도토리',world:'크로아',job:'블래스터'},'a');
   f.service.register(ctx('u2'),{name:'모찌 빵',world:'루나'},'b');
   const lines=views.roster(f.service.snapshot(ctx()),0,'all',new Set(['u1']),new Map([[a.id,'123456789']])).embeds[0].toJSON().description.split('\n\n');
-  assert.equal(lines[0],'**도토리** · 크로아 - <@u1>\n블래스터 / 전투력 : 123,456,789 [환산 사이트](https://maplescouter.com/ko/info?name=%EB%8F%84%ED%86%A0%EB%A6%AC)');
-  assert.equal(lines[1],`**모찌 빵** · 루나 - <@u2> · ⚠️ 현재 참가자 아님\n직업 미확인 / 전투력 : 미수집 [환산 사이트](${views.scouterUrl('모찌 빵')})`);
+  assert.equal(lines[0],'[**도토리**](https://maplescouter.com/ko/info?name=%EB%8F%84%ED%86%A0%EB%A6%AC) · 크로아 - <@u1>\n블래스터 / 전투력 : 123,456,789');
+  assert.equal(lines[1],`[**모찌 빵**](${views.scouterUrl('모찌 빵')}) · 루나 - <@u2> · ⚠️ 현재 참가자 아님\n직업 미확인 / 전투력 : 미수집`);
   assert.equal(views.scouterUrl('모찌 빵'),'https://maplescouter.com/ko/info?name=%EB%AA%A8%EC%B0%8C%20%EB%B9%B5');
 });
 test('roster power comes from the newest spec snapshot, then the selection cache, without API calls',t=>{
@@ -45,7 +45,7 @@ test('/캐릭터 목록 and roster paging render the new format with stored powe
     message:{flags:{has:()=>true}},async deferReply(){},async deferUpdate(){},async deleteReply(){},async editReply(p){out.push(p);},async followUp(p){out.push(p);}};
   await handler({...base,isChatInputCommand:()=>true,isButton:()=>false,commandName:'캐릭터',options:{getSubcommand:()=>'목록',getUser:()=>null,getString:()=>null}});
   const first=out.at(-1).embeds[0].toJSON().description;
-  assert.match(first,/^\*\*캐릭00\*\* · 크로아 - <@u1>\n히어로 \/ 전투력 : 1,000 \[환산 사이트\]\(https:\/\/maplescouter\.com\/ko\/info\?name=/);
+  assert.match(first,/^\[\*\*캐릭00\*\*\]\(https:\/\/maplescouter\.com\/ko\/info\?name=%EC%BA%90%EB%A6%AD00\) · 크로아 - <@u1>\n히어로 \/ 전투력 : 1,000\n/);
   await handler({...base,id:'y',isChatInputCommand:()=>false,isButton:()=>true,customId:'mp:roster:all:1'});
-  assert.match(out.at(-1).embeds[0].toJSON().description,/\*\*캐릭11\*\* · 크로아 - <@u1>\n히어로 \/ 전투력 : 1,011 /);
+  assert.match(out.at(-1).embeds[0].toJSON().description,/\[\*\*캐릭11\*\*\]\([^)]+\) · 크로아 - <@u1>\n히어로 \/ 전투력 : 1,011$/);
 });
