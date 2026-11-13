@@ -2,7 +2,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelec
 import { specChanges } from './specs.js';
 import { BOSSES, bossById, priceKey, partyLimit } from './catalog.js';
 import { formatMeso, partyRevenue, pricedBosses, distribution } from './revenue.js';
-import { clearedValue } from './records.js';
+import { clearedValue, entryLimit, entryPrice, entryShare } from './records.js';
 
 export const safe=value=>escapeMarkdown(String(value)).replace(/@/g,'＠');
 export const button=(id,label,style=ButtonStyle.Secondary,disabled=false)=>new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style).setDisabled(disabled);
@@ -185,7 +185,12 @@ export function priceTable({prices,overrides}) {
 }
 
 // ---- 보스 기록 ----
-const clearedLines=(cleared,prices)=>cleared.map(b=>`• ${safe(b.difficulty)} ${safe(b.name)}${b.monthly?' (월간)':''}${b.bossId&&prices[priceKey(b.bossId,b.difficulty)]?` · ${formatMeso(prices[priceKey(b.bossId,b.difficulty)])}`:''}`);
+// split=true shows how a saved clear is divided: "가격 ÷ N명 = 1인 몫".
+const clearedLines=(cleared,prices,split=false)=>cleared.map((b,i)=>{
+  const price=entryPrice(b,prices),label=`${split?`${i+1}. `:'• '}${safe(b.difficulty)} ${safe(b.name)}${b.monthly?' (월간)':''}`;
+  if(!price) return `${label}${split?' · 가격 없음':''}`;
+  return split?`${label} · ${formatMeso(price)} ÷ ${b.partySize??1}명 = **${formatMeso(entryShare(b,prices))}**`:`${label} · ${formatMeso(price)}`;
+});
 const count=(n,limit)=>`${n??'?'}/${limit??'?'}`;
 // Cached record with yes/no save buttons and an explicit API refresh button.
 export function bossRecord(record,prices,{fetched=false,refreshed=null}={}) {
@@ -202,12 +207,27 @@ export function bossSaved(record,prices) {
 export function bossSkipped(characterId) {
   return {content:'저장하지 않았어요.',embeds:[],components:[row(button(`mp:bhist:${characterId}:0`,'히스토리 보기'))],allowedMentions:{parse:[]}};
 }
-export function bossHistory({character,weeks},page,prices) {
+export function bossHistory({character,weeks},page,prices,canEdit=false) {
   const view=paginate(weeks,page,4);
   const emb=base().setTitle(`${safe(character.name)} · 보스 히스토리`).setDescription(view.total?`저장한 주차 ${view.total}개 · 최신순`:'저장한 기록이 없어요. /보스기록 조회 후 저장해 주세요.');
-  for(const w of view.items) emb.addFields({name:`${w.week} 주차 · ${count(w.clearCount,w.clearLimit)} · ${formatMeso(clearedValue(w.cleared,prices))}`,value:clearedLines(w.cleared,prices).join('\n').slice(0,1024)||'클리어 없음'});
-  emb.setFooter({text:`${view.page+1}/${view.pages} 페이지 · 결정석 금액은 현재 가격표 기준, 분배 전`});
-  return {embeds:[emb],components:[pager(`mp:bhist:${character.id}`,view.page,view.pages)],allowedMentions:{parse:[]}};
+  for(const w of view.items) emb.addFields({name:`${w.week} 주차 · ${count(w.clearCount,w.clearLimit)} · 1인 몫 ${formatMeso(clearedValue(w.cleared,prices))}`,value:clearedLines(w.cleared,prices,true).join('\n').slice(0,1024)||'클리어 없음'});
+  emb.setFooter({text:`${view.page+1}/${view.pages} 페이지 · 결정석 금액은 현재 가격표 기준 · 인원은 등록자가 편집할 수 있어요`});
+  const components=[];
+  if(canEdit&&view.items.some(w=>w.cleared.length)) components.push(row(new StringSelectMenuBuilder().setCustomId(`mp:bhweek:${character.id}`).setPlaceholder('인원을 편집할 주차 선택').addOptions(view.items.filter(w=>w.cleared.length).map(w=>({label:`${w.week} 주차`,value:w.week,description:truncate(`클리어 ${w.cleared.length}개 · 1인 몫 ${formatMeso(clearedValue(w.cleared,prices))}`)})))));
+  components.push(pager(`mp:bhist:${character.id}`,view.page,view.pages));
+  return {embeds:[emb],components,allowedMentions:{parse:[]}};
+}
+// Week editor: pick one cleared boss, then pick how many people shared it.
+export function bossWeekEditor({character,week:w},prices,notice=null) {
+  const emb=base().setTitle(`${safe(character.name)} · ${w.week} 주차 편집`).setDescription(`${clearedLines(w.cleared,prices,true).join('\n').slice(0,3800)}\n\n**1인 몫 합계 ${formatMeso(clearedValue(w.cleared,prices))}**`)
+    .setFooter({text:'보스를 고르고 함께 클리어한 인원을 선택하면 결정석 가격을 그 인원만큼 나눠요.'});
+  const options=w.cleared.slice(0,25).map((b,i)=>({label:truncate(`${i+1}. ${b.difficulty} ${b.name}`),value:String(i),description:truncate(`${b.partySize??1}인 · 최대 ${entryLimit(b)}인${entryPrice(b,prices)?` · 1인 ${formatMeso(entryShare(b,prices))}`:' · 가격 없음'}`)}));
+  return {content:notice,embeds:[emb],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:bhboss:${character.id}:${w.week}:${w.rev??0}`).setPlaceholder('인원을 바꿀 보스 선택').addOptions(options)),row(button(`mp:bhist:${character.id}:0`,'히스토리로 돌아가기'))],allowedMentions:{parse:[]}};
+}
+export function partySizePicker({character,week:w},index,prices) {
+  const b=w.cleared[index],price=entryPrice(b,prices),limit=entryLimit(b);
+  const options=Array.from({length:limit},(_,n)=>n+1).map(n=>({label:`${n}인${n===1?' (솔플)':''}`,value:String(n),default:(b.partySize??1)===n,description:price?truncate(`1인 ${formatMeso(Math.floor(price/n))}`):'가격 없음'}));
+  return {content:`**${safe(b.difficulty)} ${safe(b.name)}** · 함께 클리어한 인원을 선택하세요. (최대 ${limit}인)`,embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:bhsize:${character.id}:${w.week}:${w.rev??0}:${index}`).setPlaceholder('인원 선택').addOptions(options)),row(button(`mp:bhedit:${character.id}:${w.week}`,'주차 편집으로 돌아가기'))],allowedMentions:{parse:[]}};
 }
 
 // ---- 분배금 ----
