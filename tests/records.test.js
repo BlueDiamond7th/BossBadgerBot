@@ -138,49 +138,6 @@ async function handlerFor(t) {
   return {...f,...ids,handler,distributions,prices};
 }
 
-test('history is the single entry: load a week, save or skip, refresh, and notify the viewed member',async t=>{
-  const {handler,chars,calls,advance}=await handlerFor(t);
-  const open=command('보스기록','히스토리',{'캐릭터':chars.u1.id},'u2');await handler(open);
-  assert.match(open.followUps[0].content,/^<@u1> <@u2>님이 \*\*도토리\*\*의 보스 히스토리/);
-  const loads=open.outputs[0].components[0].toJSON().components;
-  assert.deepEqual(loads.map(b=>b.label),['이번 주 불러오기','지난주 불러오기']);
-  assert.equal(open.outputs[0].components.length,2,'a party member gets no edit menu');
-  const load=fake('button',{user:{id:'u2'},customId:loads[1].custom_id});await handler(load);
-  assert.match(load.outputs[0].content,/히스토리에 저장할까요/);
-  const buttons=load.outputs[0].components[0].toJSON().components;
-  assert.deepEqual(buttons.map(b=>b.label),['저장','저장 안 함','갱신','히스토리로']);
-  assert.match(load.outputs[0].embeds[0].toJSON().description,/방금 API에서 불러왔어요/);
-  assert.match(load.followUps[0].content,/^<@u1> <@u2>님이/);assert.deepEqual(load.followUps[0].allowedMentions,{users:['u1']});
-  // Loading again is served from cache: no API call and no repeated mention.
-  const again=fake('button',{user:{id:'u2'},customId:loads[1].custom_id});await handler(again);
-  assert.match(again.outputs[0].embeds[0].toJSON().description,/수집한 캐시예요\. \(지난 날짜 확정 기록\)/);assert.equal(again.followUps.length,0);
-  const refresh=fake('button',{user:{id:'u2'},customId:buttons[2].custom_id});await handler(refresh);
-  assert.match(refresh.outputs[0].content,/다시 조회하지 않았어요/);assert.equal(refresh.followUps.length,0);
-  assert.equal(schedulerCalls(calls).length,1);
-  const skip=fake('button',{user:{id:'u2'},customId:buttons[1].custom_id});await handler(skip);
-  assert.equal(skip.outputs[0].content,'저장하지 않았어요.');assert.equal(skip.outputs[0].embeds[0].toJSON().fields,undefined);
-  // A party member who saves returns to the history; only the owner edits party sizes.
-  const save=fake('button',{user:{id:'u2'},customId:buttons[0].custom_id});await handler(save);
-  assert.match(save.outputs[0].content,/저장했어요/);assert.match(save.outputs[0].embeds[0].toJSON().fields[0].name,/^2026-11-05 주차 · 12\/12/);
-  // A current-week refresh after the cache window calls the API and notifies again.
-  const current=fake('button',{user:{id:'u2'},customId:loads[0].custom_id});await handler(current);
-  advance(6*60_000);
-  const fresh=fake('button',{user:{id:'u2'},customId:current.outputs[0].components[0].toJSON().components[2].custom_id});await handler(fresh);
-  assert.equal(fresh.followUps.length,1);assert.equal(schedulerCalls(calls).length,3);
-});
-test('the owner saving a loaded week lands in the party-size editor',async t=>{
-  const {handler,chars}=await handlerFor(t);
-  const load=fake('button',{customId:`mp:bhload:${chars.u1.id}:last`});await handler(load);
-  const save=fake('button',{customId:load.outputs[0].components[0].toJSON().components[0].custom_id});await handler(save);
-  assert.match(save.outputs[0].content,/저장했어요[\s\S]*함께 클리어한 인원을 고르면/);
-  assert.equal(save.outputs[0].embeds[0].toJSON().title,'도토리 · 2026-11-05 주차 편집');
-  const menu=save.outputs[0].components[0].toJSON().components[0];
-  const pick=fake('select',{customId:menu.custom_id,values:['1']});await handler(pick);
-  const set=fake('select',{customId:pick.outputs[0].components[0].toJSON().components[0].custom_id,values:['2']});await handler(set);
-  assert.match(set.outputs[0].content,/2인으로 바꿨어요/);
-  const back=fake('button',{customId:set.outputs[0].components[1].toJSON().components[0].custom_id});await handler(back);
-  assert.match(back.outputs[0].embeds[0].toJSON().fields[0].value,/카오스 감시자 칼로스 · 12억 3,000만 메소 ÷ 2명 = \*\*6억 1,500만 메소\*\*/);
-});
 test('distribution flow: question, seller must be in party, result card, seller-only edits',async t=>{
   const {handler,party,distributions}=await handlerFor(t);
   const ask=fake('button',{customId:`mp:dist:${party.id}`});await handler(ask);
@@ -238,29 +195,71 @@ test('saved clears can be split by party size up to each boss limit, owner only,
   f.records.save(ctx(),chars.u1.id,record.day,record.collectedAt);
   assert.deepEqual(f.records.week(ctx(),chars.u1.id,'2026-11-05').week.cleared.map(b=>b.partySize??1),[2,3,1]);
 });
-test('history edit flow: week → boss → 1~N people, with the split shown in history',async t=>{
+
+const weekMenu=out=>out.components[0].toJSON().components[0];
+test('history dropdown lists saved weeks plus unsaved this/last week as "n월 n주차"',async t=>{
+  const {handler,chars,calls}=await handlerFor(t);
+  const open=command('보스기록','히스토리',{'캐릭터':chars.u1.id},'u2');await handler(open);
+  assert.match(open.followUps[0].content,/^<@u1> <@u2>님이 \*\*도토리\*\*의 보스 히스토리/);
+  const menu=weekMenu(open.outputs[0]);
+  assert.equal(menu.custom_id,`mp:bhpick:${chars.u1.id}`);
+  assert.deepEqual(menu.options.map(o=>[o.label,o.description]),[
+    ['11월 2주차 (11/12~11/18)','이번 주 · 저장 전 (선택하면 불러와요)'],
+    ['11월 1주차 (11/5~11/11)','지난주 · 저장 전 (선택하면 불러와요)']]);
+  assert.equal(open.outputs[0].embeds[0].toJSON().fields,undefined,'nothing is printed until a week is picked');
+  assert.equal(schedulerCalls(calls).length,0,'opening the history never calls the API');
+});
+test('picking an unsaved week loads a preview once; saving makes it a saved week that is never requested again',async t=>{
+  const {handler,chars,calls}=await handlerFor(t);
+  const pick=fake('select',{customId:`mp:bhpick:${chars.u1.id}`,values:['2026-11-05']});await handler(pick);
+  assert.equal(pick.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 1주차 (11/5~11/11) 보스 기록 (저장 전)');
+  const buttons=pick.outputs[0].components[0].toJSON().components;
+  assert.deepEqual(buttons.map(b=>b.label),['저장','저장 안 함','갱신','히스토리로']);
+  assert.equal(schedulerCalls(calls).length,1);
+  // Owner saves → party-size editor; set 칼로스 to 2 people.
+  const save=fake('button',{customId:buttons[0].custom_id});await handler(save);
+  assert.equal(save.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 1주차 (11/5~11/11) 편집');
+  const boss=fake('select',{customId:save.outputs[0].components[0].toJSON().components[0].custom_id,values:['1']});await handler(boss);
+  await handler(fake('select',{customId:boss.outputs[0].components[0].toJSON().components[0].custom_id,values:['2']}));
+  // The reported bug: picking the saved week again must show the saved result, not ask to load or save.
+  for(let n=0;n<3;n++) {
+    const again=fake('select',{customId:`mp:bhpick:${chars.u1.id}`,values:['2026-11-05']});await handler(again);
+    const emb=again.outputs[0].embeds[0].toJSON();
+    assert.equal(again.outputs[0].content,null);assert.equal(emb.title,'도토리 · 11월 1주차 (11/5~11/11)');
+    assert.match(emb.fields[0].value,/카오스 감시자 칼로스 · 12억 3,000만 메소 ÷ 2명 = \*\*6억 1,500만 메소\*\*/);
+    assert.ok(!JSON.stringify(again.outputs[0].components.map(r=>r.toJSON())).includes('bhsave'));
+  }
+  // Old "지난주 불러오기" buttons from earlier messages also show the saved week.
+  const legacy=fake('button',{customId:`mp:bhload:${chars.u1.id}:last`});await handler(legacy);
+  assert.equal(legacy.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 1주차 (11/5~11/11)');
+  assert.equal(schedulerCalls(calls).length,1,'no further API requests after saving');
+  // Opening the history now defaults to the saved week, marked as saved in the dropdown.
+  const open=command('보스기록','히스토리',{'캐릭터':chars.u1.id});await handler(open);
+  const menu=weekMenu(open.outputs[0]);
+  assert.match(menu.options[1].description,/^지난주 · 저장됨 · 클리어 3개 · 1인 몫/);assert.equal(menu.options[1].default,true);
+  assert.equal(open.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 1주차 (11/5~11/11)');
+  assert.deepEqual(open.outputs[0].components[1].toJSON().components.map(b=>b.label),['인원 편집']);
+});
+test('a saved current week offers an explicit reload; party members see results without edit controls',async t=>{
+  const {handler,chars,calls,advance}=await handlerFor(t);
+  const pick=fake('select',{user:{id:'u2'},customId:`mp:bhpick:${chars.u1.id}`,values:['2026-11-12']});await handler(pick);
+  assert.match(pick.followUps[0].content,/^<@u1> <@u2>님이/);assert.deepEqual(pick.followUps[0].allowedMentions,{users:['u1']});
+  const save=fake('button',{user:{id:'u2'},customId:pick.outputs[0].components[0].toJSON().components[0].custom_id});await handler(save);
+  assert.match(save.outputs[0].content,/저장했어요/);assert.equal(save.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 2주차 (11/12~11/18)');
+  assert.deepEqual(save.outputs[0].components[1].toJSON().components.map(b=>b.label),['이번 주 최신 기록 다시 불러오기'],'a party member cannot edit sizes');
+  const sneak=fake('button',{user:{id:'u2'},customId:`mp:bhedit:${chars.u1.id}:2026-11-12`});await handler(sneak);assert.match(sneak.outputs[0].content,/본인만 보스 기록을 편집/);
+  const calm=fake('select',{user:{id:'u2'},customId:`mp:bhpick:${chars.u1.id}`,values:['2026-11-12']});await handler(calm);
+  assert.equal(calm.followUps.length,0);assert.equal(schedulerCalls(calls).length,1);
+  advance(6*60_000);
+  const reload=fake('button',{user:{id:'u2'},customId:save.outputs[0].components[1].toJSON().components[0].custom_id});await handler(reload);
+  assert.match(reload.outputs[0].embeds[0].toJSON().title,/\(저장 전\)$/);assert.equal(reload.followUps.length,1);assert.equal(schedulerCalls(calls).length,2);
+  const skip=fake('button',{user:{id:'u2'},customId:reload.outputs[0].components[0].toJSON().components[1].custom_id});await handler(skip);
+  assert.equal(skip.outputs[0].content,'저장하지 않았어요.');
+});
+test('editor back button returns to the same week',async t=>{
   const {handler,records,chars}=await handlerFor(t);
   const {record}=await records.view(ctx(),chars.u1.id,'last');records.save(ctx(),chars.u1.id,record.day,record.collectedAt);
-  const open=command('보스기록','히스토리',{'캐릭터':chars.u1.id});await handler(open);
-  const weekMenu=open.outputs[0].components[1].toJSON().components[0];
-  assert.equal(weekMenu.custom_id,`mp:bhweek:${chars.u1.id}`);assert.equal(weekMenu.options[0].value,'2026-11-05');
-  const editor=fake('select',{customId:weekMenu.custom_id,values:['2026-11-05']});await handler(editor);
-  const bossMenu=editor.outputs[0].components[0].toJSON().components[0];
-  assert.deepEqual(bossMenu.options.map(o=>o.label),['1. 익스트림 스우','2. 카오스 감시자 칼로스','3. 카오스 자쿰']);
-  const pick=fake('select',{customId:bossMenu.custom_id,values:['1']});await handler(pick);
-  const sizeMenu=pick.outputs[0].components[0].toJSON().components[0];
-  assert.deepEqual(sizeMenu.options.map(o=>o.label),['1인 (솔플)','2인','3인','4인','5인','6인']);
-  assert.equal(sizeMenu.options[2].description,'1인 4억 1,000만 메소');
-  const set=fake('select',{customId:sizeMenu.custom_id,values:['3']});await handler(set);
-  assert.match(set.outputs[0].content,/카오스 감시자 칼로스\*\*을\(를\) 3인으로 바꿨어요/);
-  assert.match(set.outputs[0].embeds[0].toJSON().description,/2\. 카오스 감시자 칼로스 · 12억 3,000만 메소 ÷ 3명 = \*\*4억 1,000만 메소\*\*/);
-  // The old size menu is stale after the edit.
-  const replay=fake('select',{customId:sizeMenu.custom_id,values:['2']});await handler(replay);assert.match(replay.outputs[0].content,/기록이 바뀌었어요/);
-  const again=command('보스기록','히스토리',{'캐릭터':chars.u1.id});await handler(again);
-  assert.match(again.outputs[0].embeds[0].toJSON().fields[0].name,/1인 몫 9억 5,500만 메소/);
-  // A party member can read but not edit.
-  const other=command('보스기록','히스토리',{'캐릭터':chars.u1.id},'u2');await handler(other);
-  assert.deepEqual(other.outputs[0].components.map(r=>r.toJSON().components[0].custom_id.split(':')[1]),['bhload','bhist']);
-  const sneak=fake('select',{user:{id:'u2'},customId:weekMenu.custom_id,values:['2026-11-05']});await handler(sneak);
-  assert.match(sneak.outputs[0].content,/본인만 보스 기록을 편집/);
+  const edit=fake('button',{customId:`mp:bhedit:${chars.u1.id}:2026-11-05`});await handler(edit);
+  const back=fake('button',{customId:edit.outputs[0].components[1].toJSON().components[0].custom_id});await handler(back);
+  assert.equal(back.outputs[0].embeds[0].toJSON().title,'도토리 · 11월 1주차 (11/5~11/11)');
 });
