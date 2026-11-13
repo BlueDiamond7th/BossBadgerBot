@@ -67,6 +67,16 @@ export class BossRecords {
     requireRule(record,'해당 주차의 스케줄러 기록을 찾지 못했어요. 게임 접속 여부와 API 제공 상태를 확인해 주세요.','NEXON_NO_SCHEDULER');
     return {record,fetched:!result.cached};
   }
+  // History "저장" button: make sure the week is current (this week: 5-minute cache; last week: final record),
+  // then save it directly. Falls back to the cache when the owner has no API connection.
+  async saveLatest(ctx,characterId,period) {
+    this.access(ctx,characterId);let fetched=false;
+    try {fetched=!(await this.refresh(ctx,characterId,period)).cached;}
+    catch(error) {if(error.code!=='KEY_MISSING'||!this.cached(ctx,characterId,period)) throw error;}
+    const record=this.cached(ctx,characterId,period);
+    requireRule(record,'해당 주차의 스케줄러 기록을 찾지 못했어요. 게임 접속 여부와 API 제공 상태를 확인해 주세요.','NEXON_NO_SCHEDULER');
+    return {record:this.save(ctx,characterId,record.day,record.collectedAt),fetched};
+  }
   save(ctx,characterId,day,collectedAt) {
     const c=this.access(ctx,characterId);
     const row=this.db.prepare('SELECT day,collected_at,data_json FROM scheduler_snapshots WHERE guild_id=? AND thread_id=? AND character_id=? AND day=?').get(ctx.guildId,ctx.threadId,characterId,day);
