@@ -268,21 +268,21 @@ test('add and removal choices sort by descending level with deterministic name t
   assert.deepEqual(f.connections.beginSelection(ctx).items.map(c=>c.name),['고레벨','가','나','저레벨']);
   selectAll(f.connections);assert.deepEqual(f.connections.beginSelection(ctx,'remove').items.map(c=>c.name),['고레벨','가','나','저레벨']);
 });
-test('combat power reads only the displayed page, caches across restarts and leaves selections intact',async t=>{
+test('combat power loads all candidates before pagination, caches across restarts and leaves selections intact',async t=>{
   const calls=[],items=Array.from({length:40},(_,i)=>({...remote(`캐릭터${i}`,`ocid-${i}`),level:300-i}));
   const factory=()=>({listCharacters:async()=>items,combatPower:async ocid=>{calls.push(ocid);return '123456789';},close(){}});
   const f=setup(t,factory);await f.connections.connect(ctx,key);assert.equal(calls.length,0);
   const draft=f.connections.beginSelection(ctx);f.connections.selection(ctx,draft.id,0,[draft.items[0].value]);
-  await f.connections.loadSelectionPage(ctx,draft.id);assert.equal(calls.length,25);assert.ok(!calls.includes('ocid-25'));
+  await f.connections.loadSelectionPage(ctx,draft.id);assert.equal(calls.length,40);assert.ok(calls.includes('ocid-39'));
   const payload=views.characterSelection(draft),options=payload.components[0].toJSON().components[0].options;
   assert.equal(options[0].label,'Lv.300 캐릭터0 · 전투력 123,456,789');
   assert.equal(options[0].default,true);assert.equal(draft.selected.size,1);
-  await f.connections.loadSelectionPage(ctx,draft.id);assert.equal(calls.length,25);
+  await f.connections.loadSelectionPage(ctx,draft.id);assert.equal(calls.length,40);
   const resumed=new PersonalConnections({repository:f.repository,service:f.service,encryptionKey,clientFactory:factory,now:f.tracker.now});
-  await resumed.loadSelectionPage(ctx,resumed.beginSelection(ctx).id);assert.equal(calls.length,25);
+  await resumed.loadSelectionPage(ctx,resumed.beginSelection(ctx).id);assert.equal(calls.length,40);
   await f.connections.loadSelectionPage(ctx,draft.id,1);assert.equal(calls.length,40);
   assert.equal(f.connections.completeSelection(ctx,draft.id).added,1);
-  f.advance(3600_000);const next=f.connections.beginSelection(ctx);await f.connections.loadSelectionPage(ctx,next.id);assert.equal(calls.length,65);
+  f.advance(3600_000);const next=f.connections.beginSelection(ctx);await f.connections.loadSelectionPage(ctx,next.id);assert.equal(calls.length,79);
 });
 test('missing power remains selectable, exhausted budgets stop lookups and disconnect removes the cache',async t=>{
   let calls=0;const f=setup(t,()=>({listCharacters:async()=>[remote('A','a'),remote('B','b'),remote('C','c')],combatPower:async()=>{
@@ -300,7 +300,7 @@ test('an unavailable character power does not prevent looking up the next charac
   },close(){}}));
   await f.connections.connect(ctx,key);const draft=f.connections.beginSelection(ctx);await f.connections.loadSelectionPage(ctx,draft.id);
   const options=views.characterSelection(draft).components[0].toJSON().components[0].options;
-  assert.match(options[0].label,/조회 불가/);assert.match(options[1].label,/9,007,199,254,740,993/);
+  assert.match(options[0].label,/9,007,199,254,740,993/);assert.match(options[1].label,/조회 불가/);
 });
 test('disconnect during power lookup prevents stale cache writes',async t=>{
   let release;const f=setup(t,()=>({listCharacters:async()=>[remote()],combatPower:()=>new Promise(resolve=>release=()=>resolve('123')),close(){}}));
@@ -315,4 +315,20 @@ test('power-only lookup calls stats once and validates power without collecting 
   assert.equal(await api.combatPower('private-ocid'),'123456789');assert.equal(calls.length,1);
   assert.ok(calls[0].pathname.endsWith('/character/stat'));assert.equal(calls[0].searchParams.get('ocid'),'private-ocid');
   power='unknown';await assert.rejects(()=>api.combatPower('private-ocid'),{code:'NEXON_DATA'});
+});
+
+
+test('power ranking promotes characters from later pages and sorts large integers exactly',async t=>{
+  const items=Array.from({length:30},(_,i)=>({...remote(`캐릭터${i}`,`ocid-${i}`),level:300-i}));
+  const powers={'ocid-29':'9007199254740993','ocid-28':'9007199254740992','ocid-27':'9007199254740993'};
+  const f=setup(t,()=>({listCharacters:async()=>items,combatPower:async ocid=>powers[ocid]??'100',close(){}}));
+  await f.connections.connect(ctx,key);const draft=f.connections.beginSelection(ctx);
+  await Promise.all([f.connections.loadSelectionPage(ctx,draft.id),f.connections.loadSelectionPage(ctx,draft.id)]);
+  assert.deepEqual(draft.items.slice(0,3).map(c=>c.name),['캐릭터27','캐릭터29','캐릭터28']);
+  const top=draft.items[0].value;f.connections.selection(ctx,draft.id,0,[top]);
+  const before=draft.items.map(c=>c.value);powers['ocid-0']='999999999999999999';
+  await f.connections.loadSelectionPage(ctx,draft.id,1);assert.deepEqual(draft.items.map(c=>c.value),before);assert.ok(draft.selected.has(top));
+  assert.equal(f.connections.completeSelection(ctx,draft.id).added,1);
+  const removing=f.connections.beginSelection(ctx,'remove');await f.connections.loadSelectionPage(ctx,removing.id);
+  assert.equal(removing.items[0].name,'캐릭터27');assert.equal(removing.items[0].combatPower,'9007199254740993');
 });

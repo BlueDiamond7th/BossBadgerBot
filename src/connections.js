@@ -137,14 +137,23 @@ export class PersonalConnections {
   }
   async loadSelectionPage(ctx,id,page=0) {
     const draft=this.selection(ctx,id,page),row=this.row(ctx);
-    if(!row)return draft;
+    if(!row||draft.powerLoaded)return draft;
+    if(!draft.powerLoad)draft.powerLoad=this.loadSelectionPower(ctx,draft).finally(()=>{delete draft.powerLoad;});
+    await draft.powerLoad;this.selection(ctx,id,page);return draft;
+  }
+  async loadSelectionPower(ctx,draft) {
     const candidates=new Map(this.candidates(ctx).map(c=>[this.vault.fingerprint(c.ocid),c]));
     const bindings=new Map(this.repo.db.prepare('SELECT character_id,identity_hash FROM personal_characters WHERE guild_id=? AND thread_id=? AND user_id=?').all(...args(ctx)).map(b=>[b.character_id,b.identity_hash]));
-    for(const item of draft.items.slice(page*25,(page+1)*25)) {
+    const pending=[];
+    for(const item of draft.items) {
+      item.combatPower=null;
       const hash=draft.mode==='add'?item.value:bindings.get(item.value),remote=candidates.get(hash);
       if(!remote)continue;
       const cached=this.repo.db.prepare('SELECT combat_power,collected_at FROM personal_selection_power WHERE guild_id=? AND thread_id=? AND user_id=? AND identity_hash=?').get(...args(ctx),hash);
       if(cached&&this.now()-cached.collected_at<3600_000) {item.combatPower=cached.combat_power;continue;}
+      pending.push({item,hash,remote});
+    }
+    for(const {item,hash,remote} of pending) {
       const key=`${scope(ctx)}:${draft.version}:${hash}`;
       try {
         let work=this.powerInflight.get(key);
@@ -165,7 +174,13 @@ export class PersonalConnections {
         if(error.code==='NEXON_BUDGET')break;
       } finally {this.powerInflight.delete(key);}
     }
-    this.selection(ctx,id,page);return draft;
+    this.selection(ctx,draft.id);
+    draft.items.sort((a,b)=>{
+      const left=a.combatPower==null?-1n:BigInt(a.combatPower),right=b.combatPower==null?-1n:BigInt(b.combatPower);
+      return (left>right?-1:left<right?1:0)||(b.level??-1)-(a.level??-1)||a.name.localeCompare(b.name,'ko')||(a.world??'').localeCompare(b.world??'','ko');
+    });
+    // Freeze ordering for this selection session so page changes cannot move selected items.
+    draft.powerLoaded=true;
   }
   completeSelection(ctx,id) {
     const draft=this.selection(ctx,id);
