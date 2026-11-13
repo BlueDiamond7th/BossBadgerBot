@@ -192,30 +192,24 @@ const clearedLines=(cleared,prices,split=false)=>cleared.map((b,i)=>{
   return split?`${label} · ${formatMeso(price)} ÷ ${b.partySize??1}명 = **${formatMeso(entryShare(b,prices))}**`:`${label} · ${formatMeso(price)}`;
 });
 const count=(n,limit)=>`${n??'?'}/${limit??'?'}`;
-// Cached record with yes/no save buttons and an explicit API refresh button.
+// Loaded (not yet saved) week opened from the history: save / skip / refresh / back.
 export function bossRecord(record,prices,{fetched=false,refreshed=null}={}) {
   const source=fetched?'방금 API에서 불러왔어요.':`${stamp(record.collectedAt)}에 수집한 캐시예요.${record.final?' (지난 날짜 확정 기록)':''}`;
-  const emb=base().setTitle(`${safe(record.characterName)} · ${record.week} 주차 보스 기록`).setDescription(`${record.day} 기준 · 주간 보스 ${count(record.clearCount,record.clearLimit)} 클리어\n결정석 가격 합계(분배 전) **${formatMeso(clearedValue(record.cleared,prices))}**\n${source}`)
+  const emb=base().setTitle(`${safe(record.characterName)} · ${record.week} 주차 보스 기록 (저장 전)`).setDescription(`${record.day} 기준 · 주간 보스 ${count(record.clearCount,record.clearLimit)} 클리어\n결정석 가격 합계(1인 기준) **${formatMeso(clearedValue(record.cleared,prices))}**\n${source}`)
     .addFields({name:`클리어한 보스 ${record.cleared.length}개`,value:clearedLines(record.cleared,prices).join('\n').slice(0,1024)||'클리어한 보스가 없어요.'})
     .setFooter({text:'Data based on NEXON Open API · 갱신은 등록자의 API 키로 다시 조회해요.'});
-  const content=refreshed==='cached'?'최근에 수집한 기록이라 다시 조회하지 않았어요. 이 기록을 저장할까요?':'불러온 보스 기록을 저장할까요?';
-  return {content,embeds:[emb],components:[row(button(`mp:bhsave:${record.characterId}:${record.day}:${record.collectedAt}`,'예',ButtonStyle.Primary),button(`mp:bhskip:${record.characterId}`,'아니오'),button(`mp:bhrefresh:${record.characterId}:${record.period??'current'}`,'갱신'))],allowedMentions:{parse:[]}};
+  const content=`${refreshed==='cached'?'최근에 수집한 기록이라 다시 조회하지 않았어요. ':''}이 주차 기록을 히스토리에 저장할까요? 저장하면 함께 클리어한 인원을 편집할 수 있어요.`;
+  return {content,embeds:[emb],components:[row(button(`mp:bhsave:${record.characterId}:${record.day}:${record.collectedAt}`,'저장',ButtonStyle.Primary),button(`mp:bhskip:${record.characterId}`,'저장 안 함'),button(`mp:bhrefresh:${record.characterId}:${record.period??'current'}`,'갱신'),button(`mp:bhist:${record.characterId}:0`,'히스토리로'))],allowedMentions:{parse:[]}};
 }
-export function bossSaved(record,prices) {
-  return {...bossRecord(record,prices),content:'보스 기록을 저장했어요. 같은 주차는 마지막으로 저장한 기록으로 바뀌어요.',components:[row(button(`mp:bhist:${record.characterId}:0`,'히스토리 보기'))]};
-}
-export function bossSkipped(characterId) {
-  return {content:'저장하지 않았어요.',embeds:[],components:[row(button(`mp:bhist:${characterId}:0`,'히스토리 보기'))],allowedMentions:{parse:[]}};
-}
-export function bossHistory({character,weeks},page,prices,canEdit=false) {
+export function bossHistory({character,weeks},page,prices,canEdit=false,notice=null) {
   const view=paginate(weeks,page,4);
-  const emb=base().setTitle(`${safe(character.name)} · 보스 히스토리`).setDescription(view.total?`저장한 주차 ${view.total}개 · 최신순`:'저장한 기록이 없어요. /보스기록 조회 후 저장해 주세요.');
+  const emb=base().setTitle(`${safe(character.name)} · 보스 히스토리`).setDescription(view.total?`저장한 주차 ${view.total}개 · 최신순`:'저장한 기록이 없어요. 아래 불러오기 버튼으로 이번 주·지난주 기록을 불러와 저장하세요.');
   for(const w of view.items) emb.addFields({name:`${w.week} 주차 · ${count(w.clearCount,w.clearLimit)} · 1인 몫 ${formatMeso(clearedValue(w.cleared,prices))}`,value:clearedLines(w.cleared,prices,true).join('\n').slice(0,1024)||'클리어 없음'});
   emb.setFooter({text:`${view.page+1}/${view.pages} 페이지 · 결정석 금액은 현재 가격표 기준 · 인원은 등록자가 편집할 수 있어요`});
-  const components=[];
+  const components=[row(button(`mp:bhload:${character.id}:current`,'이번 주 불러오기',ButtonStyle.Primary),button(`mp:bhload:${character.id}:last`,'지난주 불러오기'))];
   if(canEdit&&view.items.some(w=>w.cleared.length)) components.push(row(new StringSelectMenuBuilder().setCustomId(`mp:bhweek:${character.id}`).setPlaceholder('인원을 편집할 주차 선택').addOptions(view.items.filter(w=>w.cleared.length).map(w=>({label:`${w.week} 주차`,value:w.week,description:truncate(`클리어 ${w.cleared.length}개 · 1인 몫 ${formatMeso(clearedValue(w.cleared,prices))}`)})))));
   components.push(pager(`mp:bhist:${character.id}`,view.page,view.pages));
-  return {embeds:[emb],components,allowedMentions:{parse:[]}};
+  return {content:notice,embeds:[emb],components,allowedMentions:{parse:[]}};
 }
 // Week editor: pick one cleared boss, then pick how many people shared it.
 export function bossWeekEditor({character,week:w},prices,notice=null) {

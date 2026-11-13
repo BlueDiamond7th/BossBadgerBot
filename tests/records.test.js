@@ -138,30 +138,48 @@ async function handlerFor(t) {
   return {...f,...ids,handler,distributions,prices};
 }
 
-test('boss record command shows cache with yes/no/refresh and notifies the viewed member',async t=>{
+test('history is the single entry: load a week, save or skip, refresh, and notify the viewed member',async t=>{
   const {handler,chars,calls,advance}=await handlerFor(t);
-  const view=command('보스기록','조회',{'캐릭터':chars.u1.id,'주차':'last'},'u2');await handler(view);
-  assert.equal(view.outputs[0].content,'불러온 보스 기록을 저장할까요?');
-  const buttons=view.outputs[0].components[0].toJSON().components;
-  assert.deepEqual(buttons.map(b=>b.label),['예','아니오','갱신']);
-  assert.match(view.outputs[0].embeds[0].toJSON().description,/방금 API에서 불러왔어요/);
-  assert.match(view.followUps[0].content,/^<@u1> <@u2>님이/);assert.deepEqual(view.followUps[0].allowedMentions,{users:['u1']});
-  // Second look is served from cache: no API call and no repeated mention.
-  const again=command('보스기록','조회',{'캐릭터':chars.u1.id,'주차':'last'},'u2');await handler(again);
-  assert.match(again.outputs[0].embeds[0].toJSON().description,/수집한 캐시예요\. \(지난 날짜 확정 기록\)/);
+  const open=command('보스기록','히스토리',{'캐릭터':chars.u1.id},'u2');await handler(open);
+  assert.match(open.followUps[0].content,/^<@u1> <@u2>님이 \*\*도토리\*\*의 보스 히스토리/);
+  const loads=open.outputs[0].components[0].toJSON().components;
+  assert.deepEqual(loads.map(b=>b.label),['이번 주 불러오기','지난주 불러오기']);
+  assert.equal(open.outputs[0].components.length,2,'a party member gets no edit menu');
+  const load=fake('button',{user:{id:'u2'},customId:loads[1].custom_id});await handler(load);
+  assert.match(load.outputs[0].content,/히스토리에 저장할까요/);
+  const buttons=load.outputs[0].components[0].toJSON().components;
+  assert.deepEqual(buttons.map(b=>b.label),['저장','저장 안 함','갱신','히스토리로']);
+  assert.match(load.outputs[0].embeds[0].toJSON().description,/방금 API에서 불러왔어요/);
+  assert.match(load.followUps[0].content,/^<@u1> <@u2>님이/);assert.deepEqual(load.followUps[0].allowedMentions,{users:['u1']});
+  // Loading again is served from cache: no API call and no repeated mention.
+  const again=fake('button',{user:{id:'u2'},customId:loads[1].custom_id});await handler(again);
+  assert.match(again.outputs[0].embeds[0].toJSON().description,/수집한 캐시예요\. \(지난 날짜 확정 기록\)/);assert.equal(again.followUps.length,0);
   const refresh=fake('button',{user:{id:'u2'},customId:buttons[2].custom_id});await handler(refresh);
   assert.match(refresh.outputs[0].content,/다시 조회하지 않았어요/);assert.equal(refresh.followUps.length,0);
   assert.equal(schedulerCalls(calls).length,1);
+  const skip=fake('button',{user:{id:'u2'},customId:buttons[1].custom_id});await handler(skip);
+  assert.equal(skip.outputs[0].content,'저장하지 않았어요.');assert.equal(skip.outputs[0].embeds[0].toJSON().fields,undefined);
+  // A party member who saves returns to the history; only the owner edits party sizes.
   const save=fake('button',{user:{id:'u2'},customId:buttons[0].custom_id});await handler(save);
-  assert.match(save.outputs[0].content,/저장했어요/);
-  const own=command('보스기록','히스토리',{'캐릭터':chars.u1.id});await handler(own);
-  assert.equal(own.followUps.length,0);
-  assert.match(own.outputs[0].embeds[0].toJSON().fields[0].name,/^2026-11-05 주차 · 12\/12/);
+  assert.match(save.outputs[0].content,/저장했어요/);assert.match(save.outputs[0].embeds[0].toJSON().fields[0].name,/^2026-11-05 주차 · 12\/12/);
   // A current-week refresh after the cache window calls the API and notifies again.
-  const current=command('보스기록','조회',{'캐릭터':chars.u1.id},'u2');await handler(current);
+  const current=fake('button',{user:{id:'u2'},customId:loads[0].custom_id});await handler(current);
   advance(6*60_000);
   const fresh=fake('button',{user:{id:'u2'},customId:current.outputs[0].components[0].toJSON().components[2].custom_id});await handler(fresh);
   assert.equal(fresh.followUps.length,1);assert.equal(schedulerCalls(calls).length,3);
+});
+test('the owner saving a loaded week lands in the party-size editor',async t=>{
+  const {handler,chars}=await handlerFor(t);
+  const load=fake('button',{customId:`mp:bhload:${chars.u1.id}:last`});await handler(load);
+  const save=fake('button',{customId:load.outputs[0].components[0].toJSON().components[0].custom_id});await handler(save);
+  assert.match(save.outputs[0].content,/저장했어요[\s\S]*함께 클리어한 인원을 고르면/);
+  assert.equal(save.outputs[0].embeds[0].toJSON().title,'도토리 · 2026-11-05 주차 편집');
+  const menu=save.outputs[0].components[0].toJSON().components[0];
+  const pick=fake('select',{customId:menu.custom_id,values:['1']});await handler(pick);
+  const set=fake('select',{customId:pick.outputs[0].components[0].toJSON().components[0].custom_id,values:['2']});await handler(set);
+  assert.match(set.outputs[0].content,/2인으로 바꿨어요/);
+  const back=fake('button',{customId:set.outputs[0].components[1].toJSON().components[0].custom_id});await handler(back);
+  assert.match(back.outputs[0].embeds[0].toJSON().fields[0].value,/카오스 감시자 칼로스 · 12억 3,000만 메소 ÷ 2명 = \*\*6억 1,500만 메소\*\*/);
 });
 test('distribution flow: question, seller must be in party, result card, seller-only edits',async t=>{
   const {handler,party,distributions}=await handlerFor(t);
@@ -224,7 +242,7 @@ test('history edit flow: week → boss → 1~N people, with the split shown in h
   const {handler,records,chars}=await handlerFor(t);
   const {record}=await records.view(ctx(),chars.u1.id,'last');records.save(ctx(),chars.u1.id,record.day,record.collectedAt);
   const open=command('보스기록','히스토리',{'캐릭터':chars.u1.id});await handler(open);
-  const weekMenu=open.outputs[0].components[0].toJSON().components[0];
+  const weekMenu=open.outputs[0].components[1].toJSON().components[0];
   assert.equal(weekMenu.custom_id,`mp:bhweek:${chars.u1.id}`);assert.equal(weekMenu.options[0].value,'2026-11-05');
   const editor=fake('select',{customId:weekMenu.custom_id,values:['2026-11-05']});await handler(editor);
   const bossMenu=editor.outputs[0].components[0].toJSON().components[0];
@@ -242,7 +260,7 @@ test('history edit flow: week → boss → 1~N people, with the split shown in h
   assert.match(again.outputs[0].embeds[0].toJSON().fields[0].name,/1인 몫 9억 5,500만 메소/);
   // A party member can read but not edit.
   const other=command('보스기록','히스토리',{'캐릭터':chars.u1.id},'u2');await handler(other);
-  assert.equal(other.outputs[0].components[0].toJSON().components[0].custom_id.startsWith('mp:bhist:'),true);
+  assert.deepEqual(other.outputs[0].components.map(r=>r.toJSON().components[0].custom_id.split(':')[1]),['bhload','bhist']);
   const sneak=fake('select',{user:{id:'u2'},customId:weekMenu.custom_id,values:['2026-11-05']});await handler(sneak);
   assert.match(sneak.outputs[0].content,/본인만 보스 기록을 편집/);
 });
