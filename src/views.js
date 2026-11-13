@@ -26,7 +26,7 @@ export function board(state) {
 export function roster(state,page=0,owner='all',eligibleOwnerIds=null) {
   const chars=state.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner));const view=paginate(chars,page,10);
   const lines=view.items.map(c=>`**${safe(c.name)}** · ${safe(c.world??'월드 미확인')} / ${safe(c.job??'직업 미확인')}\n등록자 <@${c.ownerId}>${eligibleOwnerIds&&!eligibleOwnerIds.has(c.ownerId)?' · ⚠️ 현재 참가자 아님':''}`);
-  return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(lines.join('\n\n')||'등록된 캐릭터가 없어요. 내 API 키 연결을 눌러 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개 · 기존 수동 등록과 API로 불러온 캐릭터가 함께 표시돼요.`})],components:[pager(`mp:roster:${owner}`,view.page,view.pages),row(button('mp:register','내 API 키 연결',ButtonStyle.Primary),button('mp:specpicker:0','스펙 변화'),button('mp:schedulerpicker:0','내 스케줄러')),home()],allowedMentions:{parse:[]}};
+  return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(lines.join('\n\n')||'등록된 캐릭터가 없어요. 내 API 키 연결을 눌러 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개 · 기존 수동 등록과 API로 불러온 캐릭터가 함께 표시돼요.`})],components:[pager(`mp:roster:${owner}`,view.page,view.pages),row(button('mp:register','캐릭터 추가 / 삭제',ButtonStyle.Primary),button('mp:specpicker:0','스펙 변화'),button('mp:schedulerpicker:0','내 스케줄러')),home()],allowedMentions:{parse:[]}};
 }
 export function partyList(state,page=0,archived=false) {
   const view=paginate(state.parties.filter(p=>p.archived===archived),page);
@@ -81,7 +81,7 @@ export function difficultyPicker(p,bossId) {
   return {content:`**${safe(b.name)}**의 난이도를 선택하세요.`,embeds:[],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:difficulty:${p.id}:${p.version}:${b.id}`).setPlaceholder('난이도').addOptions(b.difficulties.map(d=>({label:d,value:d})))),row(button(`mp:detail:${p.id}`,'파티로 돌아가기'))],allowedMentions:{parse:[]}};
 }
 export function registrationModal() {
-  return new ModalBuilder().setCustomId('mp:modal:apikey').setTitle('내 API 키 연결').addComponents(row(new TextInputBuilder().setCustomId('apikey').setLabel('이 보스방에 모든 캐릭터를 등록할 개인 API 키').setPlaceholder('메이플스토리용 API 키 · 채팅에 보내지 마세요').setStyle(TextInputStyle.Short).setRequired(true).setMinLength(20).setMaxLength(512)));
+  return new ModalBuilder().setCustomId('mp:modal:apikey').setTitle('내 API 키 연결').addComponents(row(new TextInputBuilder().setCustomId('apikey').setLabel('캐릭터를 선택해 등록할 개인 API 키').setPlaceholder('메이플스토리용 API 키 · 채팅에 보내지 마세요').setStyle(TextInputStyle.Short).setRequired(true).setMinLength(20).setMaxLength(512)));
 }
 export function creationModal() {return new ModalBuilder().setCustomId('mp:modal:create').setTitle('새 파티 만들기').addComponents(row(new TextInputBuilder().setCustomId('name').setLabel('파티 이름').setPlaceholder('목요일 본캐팟').setMaxLength(60).setStyle(TextInputStyle.Short).setRequired(true)));}
 export function archiveConfirmation(p) {
@@ -123,10 +123,17 @@ export function specDetail(character,history,manual,ctx,index=0,page=0) {
 }
 
 export function connectionPanel(status) {
-  const text=status.connected?`내 API 키가 연결되어 있어요. API 목록 캐릭터 ${status.count}개 · 마지막 동기화 ${stamp(status.importedAt)}`:'내 메이플스토리 API 키를 연결해 보유 캐릭터를 한 번에 불러오세요.';
+  const text=status.connected?`내 API 키가 연결되어 있어요. 내 등록 캐릭터 ${status.count}개 · 마지막 동기화 ${stamp(status.importedAt)}`:'내 메이플스토리 API 키를 연결해 등록할 캐릭터를 선택하세요.';
   const buttons=[button('mp:apikey',status.connected?'API 키 교체':'API 키 입력',ButtonStyle.Primary,!status.configured)];
-  if(status.connected)buttons.push(button('mp:accountsync','캐릭터 동기화'),button('mp:disconnectask','API 연결 해제',ButtonStyle.Danger));
-  return {content:`${text}\n\n연결하면 API가 반환하는 모든 캐릭터의 이름·월드·직업이 **현재 보스방에 공개**됩니다. 다른 보스방에는 자동 등록하지 않아요.\n키는 암호화 저장하며 응답에 표시하지 않습니다. 스펙은 하루 한 번, 본인 전용 스케줄러는 매시간 수집을 시도해요.\n${status.configured?'API 연결 해제 시 저장된 키를 삭제하고 자동 수집을 중단합니다.':'서버 운영자가 API_KEY_ENCRYPTION_KEY를 먼저 설정해야 해요.'}`,embeds:[],components:[row(...buttons),home()],allowedMentions:{parse:[]}};
+  if(status.connected)buttons.push(button('mp:charadd','캐릭터 추가',ButtonStyle.Success),button('mp:accountsync','계정 목록 갱신'));
+  buttons.push(button('mp:charremove','캐릭터 삭제',ButtonStyle.Danger));
+  return {content:`${text}\n\nAPI 연결 → 캐릭터 여러 개 선택 → 등록 완료 순서로 진행해요. **선택해 등록한 캐릭터만 현재 보스방에 공개**됩니다. 계정 목록 갱신으로 새 캐릭터가 자동 등록되지는 않아요.\n키는 암호화 저장하며 응답에 표시하지 않습니다. 등록한 API 캐릭터만 스펙은 하루 한 번, 본인 전용 스케줄러는 매시간 수집을 시도해요.\n${status.configured?'API 연결 해제 시 저장된 키를 삭제하고 자동 수집을 중단합니다.':'서버 운영자가 API_KEY_ENCRYPTION_KEY를 먼저 설정해야 해요.'}`,embeds:[],components:[row(...buttons),...(status.connected?[row(button('mp:disconnectask','API 연결 해제',ButtonStyle.Danger))]:[]),home()],allowedMentions:{parse:[]}};
+}
+export function characterSelection(draft,page=0) {
+  const list=paginate(draft.items,page,25),removing=draft.mode==='remove',components=[];
+  if(list.items.length)components.push(row(new StringSelectMenuBuilder().setCustomId(`mp:charselect:${draft.id}:${list.page}`).setPlaceholder(removing?'삭제할 내 캐릭터 여러 개 선택':'등록할 캐릭터 여러 개 선택').setMinValues(0).setMaxValues(list.items.length).addOptions(list.items.map(c=>({label:truncate(c.name),description:truncate(`${c.world??'월드 미확인'} · ${c.job??'직업 미확인'}${c.level?` · Lv.${c.level}`:''}`),value:c.value,default:draft.selected.has(c.value)})))));
+  components.push(pager(`mp:charpage:${draft.id}`,list.page,list.pages),row(button(`mp:charcomplete:${draft.id}`,removing?'선택 캐릭터 삭제':'등록 완료',removing?ButtonStyle.Danger:ButtonStyle.Success,draft.selected.size===0),button('mp:register','취소')));
+  return {content:`${removing?'삭제할 내 캐릭터':'등록할 캐릭터'}를 여러 개 선택한 뒤 **${removing?'선택 캐릭터 삭제':'등록 완료'}**를 눌러 주세요.\n${list.page+1}/${list.pages} 페이지 · 후보 ${list.total}개 · 선택 ${draft.selected.size}개\n페이지를 이동해도 선택은 유지돼요. ${removing?'현재 파티에 편성 중이면 먼저 파티에서 제외해 주세요. 삭제해도 과거 기록은 보존합니다.':'선택 전 계정 목록은 본인에게만 보여요.'}${list.total?'':'\n선택 가능한 캐릭터가 없어요.'}`,embeds:[],components,allowedMentions:{parse:[]}};
 }
 export function disconnectConfirmation(version) {
   return {content:'이 보스방의 내 API 연결을 해제할까요? 저장된 키와 캐릭터 API 연결 정보를 삭제하고 자동 수집을 중단합니다. 이미 등록한 캐릭터·파티·기록은 유지하며, API 이력에는 보관 기간이 적용됩니다.',embeds:[],components:[row(button(`mp:disconnect:${version}`,'API 연결 해제',ButtonStyle.Danger),button('mp:register','취소'))],allowedMentions:{parse:[]}};

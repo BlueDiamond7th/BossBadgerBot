@@ -31,7 +31,8 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
     return view.disconnectConfirmation(row.version);
   }
   function imported(ctx,result) {
-    return {...view.roster(service.snapshot(ctx),0,ctx.userId),content:result.cached?'최근 동기화한 캐릭터 목록입니다. 1분 후 다시 동기화할 수 있어요.':`캐릭터 목록 동기화 완료: 추가 ${result.added}개 · 갱신 ${result.updated}개 · 이름 충돌로 건너뜀 ${result.conflicts}개. 스펙·스케줄러는 자동 수집하거나 개별 갱신할 수 있어요.`};
+    const payload=view.characterSelection(connections.beginSelection(ctx,'add'));
+    return {...payload,content:`${result.cached?'최근 계정 목록을 사용해요.':'계정 목록을 갱신했어요.'} 새 캐릭터는 자동 등록하지 않아요.\n${payload.content}`};
   }
   function scheduler(ctx,id,index=0,page=0) {
     requireRule(tracker,'스케줄러 기능을 사용할 수 없어요.');
@@ -170,6 +171,9 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         const [prefix,action,id,a,b]=i.customId.split(':');requireRule(prefix==='mp','지원하지 않는 동작이에요.');
         const selected=i.values?.[0];
         if(action==='register') payload=connection(ctx);
+        if(action==='charadd'||action==='charremove') {connection(ctx);payload=view.characterSelection(connections.beginSelection(ctx,action==='charadd'?'add':'remove'));}
+        if(action==='charpage'||action==='charselect') {connection(ctx);const page=Number(a),draft=connections.selection(ctx,id,page,action==='charselect'?i.values:null);payload=view.characterSelection(draft,page);}
+        if(action==='charcomplete') {connection(ctx);const result=connections.completeSelection(ctx,id);changed=true;onConnectionChanged();payload={...connection(ctx),content:result.removed!==undefined?`내 캐릭터 ${result.removed}개를 삭제했어요. 과거 파티·기록은 유지하며 자동 수집을 중단해요.`:`등록 완료: 추가 ${result.added}개 · 갱신 ${result.updated}개 · 이름 충돌 ${result.conflicts}개. 등록한 캐릭터만 자동 수집해요.`};}
         if(action==='accountsync') {connection(ctx);payload=imported(ctx,await connections.refresh(ctx));changed=true;onConnectionChanged();}
         if(action==='disconnectask') payload=disconnect(ctx);
         if(action==='disconnect') {connection(ctx);connections.disconnect(ctx,id);payload={...connection(ctx),content:'내 API 연결을 해제했어요. 키를 삭제하고 자동 추적을 중단했습니다. 기존 캐릭터·파티·기록은 유지됩니다.'};}

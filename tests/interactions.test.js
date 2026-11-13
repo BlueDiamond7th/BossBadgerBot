@@ -26,9 +26,14 @@ function setup(t,verifyContext=async()=>({...context})) {
   const handler=createHandler({service,connections,guildId:'g',verifyContext,resolveOwners:async()=>new Set(['u1','u2'])});return {service,handler,connections};
 }
 test('full Discord command and persistent button flow creates party, character and boss',async t=>{
-  const {service,handler}=setup(t);
+  const {service,handler,connections}=setup(t);
   await handler(command('보스방','시작'));
   await handler(fake('modal',{customId:'mp:modal:apikey',fields:{getTextInputValue:()=> 'test-key-'.repeat(8)}}));
+  assert.equal(service.snapshot(context).characters.length,0);
+  const draft=[...connections.selections.values()][0];
+  const chooseCharacters=fake('select',{customId:`mp:charselect:${draft.id}:0`,values:draft.items.map(c=>c.value)});await handler(chooseCharacters);
+  assert.equal(service.snapshot(context).characters.length,0);
+  await handler(fake('button',{customId:`mp:charcomplete:${draft.id}`}));
   await handler(command('파티','생성',{'이름':'목요일팟'}));
   const s=service.snapshot(context),p=s.parties[0];
   await handler(command('파티','캐릭터추가',{'파티':p.id,'캐릭터':s.characters[0].id}));
@@ -123,7 +128,7 @@ test('shared party query publishes a read card and removes private acknowledgeme
 test('private modal submission updates the existing personal message',async t=>{
   const {service,handler}=setup(t);service.start(context,'start');let updates=0,replies=0;
   const i=fake('modal',{customId:'mp:modal:apikey',fields:{getTextInputValue:()=> 'test-key-'.repeat(8)},async deferUpdate(){updates++;this.deferred=true;},async deferReply(){replies++;this.deferred=true;}});
-  await handler(i);assert.equal(updates,1);assert.equal(replies,0);assert.equal(service.snapshot(context).characters.length,1);
+  await handler(i);assert.equal(updates,1);assert.equal(replies,0);assert.equal(service.snapshot(context).characters.length,0);assert.match(i.outputs[0].content,/등록할 캐릭터/);
 });
 test('private navigation replaces the panel without follow-up messages',async t=>{
   const {service,handler}=setup(t);service.start(context,'start');let updated=0;
@@ -178,8 +183,8 @@ test('API connection replaces manual registration without command options or sec
   assert.equal(views.registrationModal().toJSON().components.length,1);
   const secret='test-key-'.repeat(8);
   const i=fake('modal',{customId:'mp:modal:apikey',fields:{getTextInputValue:key=>{assert.equal(key,'apikey');return secret;}}});
-  await handler(i);assert.equal(service.snapshot(context).characters[0].world,'루나');
+  await handler(i);assert.equal(service.snapshot(context).characters.length,0);assert.match(i.outputs[0].content,/등록할 캐릭터/);
   assert.ok(!JSON.stringify(i.outputs).includes(secret));
   const legacy=fake('modal',{customId:'mp:modal:register',fields:{getTextInputValue:()=>assert.fail('must not read old name as key')}});
-  await handler(legacy);assert.equal(service.snapshot(context).characters.length,1);
+  await handler(legacy);assert.equal(service.snapshot(context).characters.length,0);
 });

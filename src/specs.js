@@ -147,7 +147,7 @@ export class SpecTracker {
       if(this.stopped) return;
       try {
         if(kind==='spec'&&this.history(ctx,id)[0]?.day===kstDay(this.now()))continue;
-        if(this.connections&&!this.connections.status(ctx).connected)continue;
+        if(this.connections&&(!this.connections.status(ctx).connected||!this.connections.isTracked(ctx,id)))continue;
         if(!await canCollect(ctx))continue;
         const result=kind==='scheduler'?await this.syncScheduler(ctx,id,{automatic:true}):await this.sync(ctx,id,{automatic:true});
         if(this.stopped)return;
