@@ -42,10 +42,8 @@ export const commands=[
       .addStringOption(o=>o.setName('이름').setDescription('새 이름').setMaxLength(60).setRequired(true)))
     .addSubcommand(s=>partyOption(s.setName('보관').setDescription('파티를 보관함으로 옮겨요. 복원할 수 있어요.')))
     .addSubcommand(s=>partyOption(s.setName('복원').setDescription('보관한 파티를 다시 활성화해요'))),
-  root('보스기록','스케줄러 캐시로 주간 보스 클리어 기록을 보고 저장해요')
-    .addSubcommand(s=>charOption(s.setName('조회').setDescription('파티원 캐릭터의 이번 주·지난주 보스 기록을 봐요 (캐시 우선)'))
-      .addStringOption(o=>o.setName('주차').setDescription('조회할 주차 (기본: 이번 주)').addChoices({name:'이번 주',value:'current'},{name:'지난주',value:'last'})))
-    .addSubcommand(s=>charOption(s.setName('히스토리').setDescription('저장한 주차별 보스 기록을 봐요'))),
+  root('보스기록','주간 보스 클리어 기록을 불러와 저장하고 인원을 편집해요')
+    .addSubcommand(s=>charOption(s.setName('히스토리').setDescription('저장한 주차별 보스 기록을 보고, 이번 주·지난주 기록을 불러와 저장해요'))),
   root('결정석','보스 결정석 가격표를 보고 수정해요')
     .addSubcommand(s=>s.setName('가격표').setDescription('현재 서버의 결정석 가격표를 봐요'))
     .addSubcommand(s=>bossOption(s.setName('가격수정').setDescription('보스 결정석 가격을 수정해요'))

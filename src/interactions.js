@@ -178,7 +178,6 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
           if(p) payload=await detail(ctx,i,p.id);
         } else if(i.commandName==='보스기록') {
           const r=need(records,'보스 기록'),id=get('캐릭터');
-          if(sub==='조회') {const result=await r.view(ctx,id,get('주차')??'current');payload=view.bossRecord(result.record,priceMap(ctx.guildId),{fetched:result.fetched});notice=bossNotice(result.record,`${result.record.week} 주차 보스 기록`);}
           if(sub==='히스토리') {const h=r.history(ctx,id);payload=view.bossHistory(h,0,priceMap(ctx.guildId),h.character.ownerId===ctx.userId);notice={owner:h.character.ownerId,name:h.character.name,what:'보스 히스토리'};}
         } else if(i.commandName==='결정석') {
           const book=need(prices,'결정석 가격');
@@ -244,8 +243,18 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
           payload=view.bossRecord(record,priceMap(ctx.guildId),{fetched:!result.cached,refreshed:result.cached?'cached':'fetched'});
           if(!result.cached) notice=bossNotice(record,`${record.week} 주차 보스 기록`);
         }
-        if(action==='bhsave') payload=view.bossSaved(need(records,'보스 기록').save(ctx,id,a,Number(b)),priceMap(ctx.guildId));
-        if(action==='bhskip') payload=view.bossSkipped(id);
+        if(action==='bhload') {
+          const result=await need(records,'보스 기록').view(ctx,id,a==='last'?'last':'current');
+          payload=view.bossRecord(result.record,priceMap(ctx.guildId),{fetched:result.fetched});
+          if(result.fetched) notice=bossNotice(result.record,`${result.record.week} 주차 보스 기록`);
+        }
+        // Saving leads straight to the party-size editor for the owner; others return to the history.
+        if(action==='bhsave') {
+          const r=need(records,'보스 기록'),record=r.save(ctx,id,a,Number(b)),done='보스 기록을 저장했어요. 같은 주차는 마지막으로 저장한 기록으로 바뀌어요.';
+          if(record.ownerId===ctx.userId&&record.cleared.length) payload=view.bossWeekEditor(r.week(ctx,id,record.week),priceMap(ctx.guildId),`${done}\n함께 클리어한 인원을 고르면 결정석을 그 인원만큼 나눠요.`);
+          else {const h=r.history(ctx,id);payload=view.bossHistory(h,0,priceMap(ctx.guildId),h.character.ownerId===ctx.userId,done);}
+        }
+        if(action==='bhskip') {const h=need(records,'보스 기록').history(ctx,id);payload=view.bossHistory(h,0,priceMap(ctx.guildId),h.character.ownerId===ctx.userId,'저장하지 않았어요.');}
         if(action==='bhist') {const h=need(records,'보스 기록').history(ctx,id);payload=view.bossHistory(h,Number(a),priceMap(ctx.guildId),h.character.ownerId===ctx.userId);}
         if(action==='bhweek'||action==='bhedit') {
           const w=need(records,'보스 기록').week(ctx,id,selected??a);
