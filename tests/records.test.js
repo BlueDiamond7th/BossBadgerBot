@@ -10,6 +10,7 @@ import { PriceBook, DistributionBook } from '../src/revenue.js';
 import { DEFAULT_CRYSTAL_PRICES } from '../src/catalog.js';
 import { createHandler } from '../src/interactions.js';
 
+const block=text=>{const m=String(text).match(/```ansi\n([\s\S]*?)\n```/);return m?m[1].replace(/\u001b\[[\d;]*m/g,'').split('\n').map(l=>l.replace(/\s+/g,' ').trim()):[];};
 const ctx=(userId='u1')=>({guildId:'g',threadId:'t',userId,isManager:false,eligibleOwnerIds:new Set(['u1','u2','u3'])});
 const encryptionKey=Buffer.alloc(32,7).toString('base64');
 const keyOf=user=>`personal-api-key-of-${user}-for-tests`;
@@ -176,7 +177,7 @@ test('crystal price command updates the table shown in party revenue',async t=>{
   assert.match(set.outputs[0].content,/12억 3,000만 메소 → 13억 메소/);
   const detail=fake('button',{customId:`mp:detail:${party.id}`});await handler(detail);
   const field=detail.outputs[0].embeds[0].toJSON().fields.find(f=>f.name.startsWith('결정석 수익'));
-  assert.match(field.value,/카오스 감시자 칼로스: 6억 5,000만 메소 \(13억 메소 ÷ 2명\)/);
+  assert.deepEqual(block(field.value),['CHAOS 감시자 칼로스 6억 5,000만 메소 (13억 메소 ÷ 2명)']);assert.match(field.value,/\*\*주간 합계 6억 5,000만 메소\*\*$/);
 });
 
 test('saved clears can be split by party size up to each boss limit, owner only, and survive re-saving',async t=>{
@@ -226,7 +227,7 @@ test('picking an unsaved week loads a preview once; saving makes it a saved week
     const again=fake('select',{customId:`mp:bhpick:${chars.u1.id}`,values:['2026-11-05']});await handler(again);
     const emb=again.outputs[0].embeds[0].toJSON();
     assert.equal(again.outputs[0].content,null);assert.equal(emb.title,'도토리 · 11월 1주차 (11/5~11/11)');
-    assert.match(emb.fields[0].value,/카오스 감시자 칼로스 · 12억 3,000만 메소 ÷ 2명 = \*\*6억 1,500만 메소\*\*/);
+    assert.ok(block(emb.description).includes('2. CHAOS 감시자 칼로스 · 12억 3,000만 메소 ÷ 2명 = 6억 1,500만 메소'));
     assert.ok(!JSON.stringify(again.outputs[0].components.map(r=>r.toJSON())).includes('bhsave'));
   }
   // Old "지난주 불러오기" buttons from earlier messages also show the saved week.
@@ -340,12 +341,12 @@ test('monthly bosses are listed last without a number, and editing still targets
   ];
   repository.db.prepare('INSERT INTO boss_history VALUES(?,?,?,?,?,?,?)').run('g','t',chars.u1.id,'2026-11-05',JSON.stringify({week:'2026-11-05',day:'2026-11-11',clearCount:2,clearLimit:12,cleared}),'u1',1);
   const open=command('보스기록','히스토리',{'캐릭터':chars.u1.id});await handler(open);
-  assert.deepEqual(open.outputs[0].embeds[0].toJSON().fields[0].value.split('\n').map(l=>l.split(' · ')[0]),
-    ['1. 익스트림 스우','2. 카오스 감시자 칼로스','• 익스트림 검은 마법사 (월간)']);
+  assert.deepEqual(block(open.outputs[0].embeds[0].toJSON().description).map(l=>l.split(' · ')[0]),
+    ['1. EXTREME 스우','2. CHAOS 감시자 칼로스','• EXTREME 검은 마법사 (월간)']);
   const edit=fake('button',{customId:`mp:bhedit:${chars.u1.id}:2026-11-05`});await handler(edit);
   const options=edit.outputs[0].components[0].toJSON().components[0].options;
   assert.deepEqual(options.map(o=>[o.label,o.value]),[['1. 익스트림 스우','0'],['2. 카오스 감시자 칼로스','2'],['익스트림 검은 마법사 (월간)','1']]);
-  assert.match(edit.outputs[0].embeds[0].toJSON().description,/^1\. 익스트림 스우[^\n]*\n2\. 카오스 감시자 칼로스[^\n]*\n• 익스트림 검은 마법사 \(월간\)/);
+  assert.deepEqual(block(edit.outputs[0].embeds[0].toJSON().description).map(l=>l.split(' · ')[0]),['1. EXTREME 스우','2. CHAOS 감시자 칼로스','• EXTREME 검은 마법사 (월간)']);
   // Picking "2. 카오스 감시자 칼로스" edits the 칼로스 entry, not the monthly one stored between them.
   const pick=fake('select',{customId:options.length&&edit.outputs[0].components[0].toJSON().components[0].custom_id,values:['2']});await handler(pick);
   await handler(fake('select',{customId:pick.outputs[0].components[0].toJSON().components[0].custom_id,values:['3']}));

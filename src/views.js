@@ -9,6 +9,29 @@ export const button=(id,label,style=ButtonStyle.Secondary,disabled=false)=>new B
 const row=(...items)=>new ActionRowBuilder().addComponents(...items);
 export const home=()=>row(button('mp:board','보스방'),button('mp:roster:all:0','캐릭터'),button('mp:parties:active:0','파티'));
 const base=()=>new EmbedBuilder().setColor(0x46745b);
+// ---- Difficulty badges (Discord ANSI code block; colours show on desktop/web) ----
+const ESC='\u001b[';
+const color=(code,text)=>`${ESC}${code}m${text}${ESC}0m`;
+const BADGES={'이지':['1;37','  EASY  '],'노말':['1;44',' NORMAL '],'하드':['1;45','  HARD  '],'카오스':['1;33;40','  CHAOS  '],'익스트림':['1;31;40',' EXTREME ']};
+const BADGE_WIDTH=9;
+// Plain text only inside the block: Markdown, links and mentions do not render there, and a backtick would close it.
+const plain=value=>String(value).replace(/`/g,'ˋ').replace(/[\x00-\x1f]/g,'');
+// The coloured badge keeps its own padding; extra spaces outside it line up the boss names.
+export function bossBadge(difficulty,name) {
+  const [code,label]=BADGES[difficulty]??['1;37',` ${plain(difficulty)} `];
+  return `${color(code,label)}${' '.repeat(Math.max(0,BADGE_WIDTH-label.length))} ${color('1;37',plain(name))}`;
+}
+export const strong=text=>color('1;37',plain(text));
+// Wraps lines in one ansi block that fits `max` characters, cutting at a line boundary.
+export function ansiBlock(lines,max=1024) {
+  const open='```ansi\n',close='\n```',kept=[];let size=open.length+close.length;
+  for(const [i,line] of lines.entries()) {
+    const more=lines.length-i-1,cost=line.length+(kept.length?1:0);
+    if(size+cost+(more?12:0)>max) {kept.push(`… 외 ${lines.length-i}개`);break;}
+    kept.push(line);size+=cost;
+  }
+  return `${open}${kept.join('\n')}${close}`;
+}
 const truncate=(s,max=100)=>String(s).slice(0,max);
 export function paginate(items,page=0,size=15) {
   const pages=Math.max(1,Math.ceil(items.length/size));
@@ -57,15 +80,14 @@ export function partyDetail(state,p,ctx,warnings=[],prices=null) {
   const canEdit=ctx.isManager||p.creatorId===ctx.userId;
   const emb=base().setTitle(`${p.archived?'📦':'⚔️'} ${safe(p.name)}`).setDescription(`만든 사람 <@${p.creatorId}> · ${chars.length}명${p.archived?' · 보관됨':''}`).addFields(
     {name:'파티 캐릭터',value:chars.slice(0,12).map(c=>`• **${safe(c.name)}** · ${safe(c.job??'직업 미확인')} · <@${c.ownerId}>${ctx.eligibleOwnerIds&&!ctx.eligibleOwnerIds.has(c.ownerId)?' ⚠️ 현재 참가자 아님':''}`).join('\n').slice(0,1000)||'아직 비어 있어요. 아래에서 캐릭터를 추가하세요.'},
-    {name:'등록 보스',value:p.bosses.map((b,i)=>`${i+1}. ${safe(b.difficulty)} ${safe(bossById(b.bossId)?.name??b.bossId)}`).join('\n')||'보스가 아직 등록되지 않았어요.'}
+    {name:'등록 보스',value:p.bosses.length?ansiBlock(p.bosses.map((b,i)=>`${String(i+1).padStart(2)}. ${bossBadge(b.difficulty,bossById(b.bossId)?.name??b.bossId)}`)):'보스가 아직 등록되지 않았어요.'}
   ).setFooter({text:`구성 버전 ${p.version} · 캐릭터·보스 변경은 이 파티에만 반영돼요.`});
   if(chars.length>12) emb.addFields({name:'전체 구성원',value:`총 ${chars.length}명 중 12명을 표시했어요. 캐릭터 목록이나 제외 메뉴에서 나머지를 확인하세요.`});
   if(warnings.length) emb.addFields({name:'편성 확인',value:warnings.slice(0,3).map(safe).join('\n').slice(0,1000)});
   if(prices&&p.bosses.length) {
     const r=partyRevenue(p,prices);
-    const lines=r.lines.map(x=>x.price?`• ${safe(x.difficulty)} ${safe(x.boss.name)}: ${formatMeso(x.share)} (${formatMeso(x.price)} ÷ ${x.divisor}명${x.boss.monthly?' · 월간':''})`:`• ${safe(x.difficulty)} ${safe(x.boss?.name??'알 수 없는 보스')}: 솔플 가정 · 가격 없음`);
-    lines.push(`**주간 합계 ${formatMeso(r.weekly)}**${r.monthly?` · 월간 ${formatMeso(r.monthly)}`:''}`);
-    emb.addFields({name:'결정석 수익 · 1인 기준',value:lines.join('\n').slice(0,1024)});
+    const lines=r.lines.map(x=>`${bossBadge(x.difficulty,x.boss?.name??'알 수 없는 보스')} ${x.price?`${strong(formatMeso(x.share))} (${formatMeso(x.price)} ÷ ${x.divisor}명${x.boss.monthly?' · 월간':''})`:'솔플 가정 · 가격 없음'}`);
+    emb.addFields({name:'결정석 수익 · 1인 기준',value:`${ansiBlock(lines,960)}**주간 합계 ${formatMeso(r.weekly)}**${r.monthly?` · 월간 ${formatMeso(r.monthly)}`:''}`});
   }
   const components=[];const token=`${p.id}:0:${p.version}`;
   if(canEdit&&!p.archived) components.push(row(button(`mp:addmember:${token}`,'캐릭터 추가',ButtonStyle.Primary),button(`mp:delmember:${token}`,'캐릭터 제외'),button(`mp:addboss:${token}`,'보스 추가',ButtonStyle.Primary),button(`mp:delboss:${token}`,'보스 제외')));
@@ -201,17 +223,18 @@ const ordered=cleared=>{
   const rows=cleared.map((b,index)=>({b,index}));let no=0;
   return [...rows.filter(r=>!r.b.monthly),...rows.filter(r=>r.b.monthly)].map(r=>({...r,no:r.b.monthly?null:++no}));
 };
+// Lines for an ansi block: "1. [badge] 보스명 · 가격 ÷ N명 = 1인 몫"; monthly bosses get "•" and "(월간)".
 const clearedLines=(cleared,prices,split=false)=>ordered(cleared).map(({b,no})=>{
-  const price=entryPrice(b,prices),label=`${split&&no?`${no}. `:'• '}${safe(b.difficulty)} ${safe(b.name)}${b.monthly?' (월간)':''}`;
+  const price=entryPrice(b,prices),label=`${split&&no?`${String(no).padStart(2)}.`:' •'} ${bossBadge(b.difficulty,b.name)}${b.monthly?' (월간)':''}`;
   if(!price) return `${label}${split?' · 가격 없음':''}`;
-  return split?`${label} · ${formatMeso(price)} ÷ ${b.partySize??1}명 = **${formatMeso(entryShare(b,prices))}**`:`${label} · ${formatMeso(price)}`;
+  return split?`${label} · ${formatMeso(price)} ÷ ${b.partySize??1}명 = ${strong(formatMeso(entryShare(b,prices)))}`:`${label} · ${formatMeso(price)}`;
 });
+const clearedBlock=(cleared,prices,split,max,empty)=>cleared.length?ansiBlock(clearedLines(cleared,prices,split),max):empty;
 const count=(n,limit)=>`${n??'?'}/${limit??'?'}`;
 // Loaded (not yet saved) week opened from the history: save / skip / refresh / back.
 export function bossRecord(record,prices,{fetched=false,refreshed=null}={}) {
   const source=fetched?'방금 API에서 불러왔어요.':`${stamp(record.collectedAt)}에 수집한 캐시예요.${record.final?' (지난 날짜 확정 기록)':''}`;
-  const emb=base().setTitle(`${safe(record.characterName)} · ${weekLabel(record.week)} 보스 기록 (저장 전)`).setDescription(`${record.day} 기준 · 주간 보스 ${count(record.clearCount,record.clearLimit)} 클리어\n결정석 가격 합계(1인 기준) **${formatMeso(clearedValue(record.cleared,prices))}**\n${source}`)
-    .addFields({name:`클리어한 보스 ${record.cleared.length}개`,value:clearedLines(record.cleared,prices).join('\n').slice(0,1024)||'클리어한 보스가 없어요.'})
+  const emb=base().setTitle(`${safe(record.characterName)} · ${weekLabel(record.week)} 보스 기록 (저장 전)`).setDescription(`${record.day} 기준 · 주간 보스 ${count(record.clearCount,record.clearLimit)} 클리어\n결정석 가격 합계(1인 기준) **${formatMeso(clearedValue(record.cleared,prices))}**\n${source}\n\n**클리어한 보스 ${record.cleared.length}개**\n${clearedBlock(record.cleared,prices,false,3500,'클리어한 보스가 없어요.')}`)
     .setFooter({text:'Data based on NEXON Open API · 갱신은 등록자의 API 키로 다시 조회해요.'});
   const content=`${refreshed==='cached'?'최근에 수집한 기록이라 다시 조회하지 않았어요. ':''}이 주차 기록을 히스토리에 저장할까요? 저장하면 함께 클리어한 인원을 편집할 수 있어요.`;
   return {content,embeds:[emb],components:[row(button(`mp:bhsave:${record.characterId}:${record.day}:${record.collectedAt}`,'저장',ButtonStyle.Primary),button(`mp:bhskip:${record.characterId}`,'저장 안 함'),button(`mp:bhrefresh:${record.characterId}:${record.period??'current'}`,'갱신'),button(`mp:bhist:${record.characterId}:0`,'히스토리로')),home()],allowedMentions:{parse:[]}};
@@ -228,8 +251,7 @@ export function bossHistory({character,options},prices,{selected=null,canEdit=fa
   const emb=base();
   if(current) {
     const w=current.data;
-    emb.setTitle(`${safe(character.name)} · ${weekLabel(w.week)}`).setDescription(`주간 보스 ${count(w.clearCount,w.clearLimit)} 클리어 · 1인 몫 합계 **${formatMeso(clearedValue(w.cleared,prices))}**`)
-      .addFields({name:`클리어한 보스 ${w.cleared.length}개`,value:clearedLines(w.cleared,prices,true).join('\n').slice(0,1024)||'클리어 없음'});
+    emb.setTitle(`${safe(character.name)} · ${weekLabel(w.week)}`).setDescription(`주간 보스 ${count(w.clearCount,w.clearLimit)} 클리어 · 1인 몫 합계 **${formatMeso(clearedValue(w.cleared,prices))}**\n\n**클리어한 보스 ${w.cleared.length}개**\n${clearedBlock(w.cleared,prices,true,3800,'클리어 없음')}`);
   } else emb.setTitle(`${safe(character.name)} · 보스 히스토리`).setDescription(savedCount?`저장한 주차 ${savedCount}개 · 아래에서 주차를 선택하세요.`:'저장한 기록이 없어요. 아래 저장 버튼으로 이번 주·지난주 기록을 바로 저장하거나, 주차를 골라 먼저 확인하세요.');
   emb.setFooter({text:'결정석 금액은 현재 가격표 기준 · 저장한 주차는 다시 불러오지 않아요 · 인원은 등록자가 편집해요'});
   const list=paginate(options,page,25);
@@ -250,7 +272,7 @@ export function bossHistory({character,options},prices,{selected=null,canEdit=fa
 }
 // Week editor: pick one cleared boss, then pick how many people shared it.
 export function bossWeekEditor({character,week:w},prices,notice=null) {
-  const emb=base().setTitle(`${safe(character.name)} · ${weekLabel(w.week)} 편집`).setDescription(`${clearedLines(w.cleared,prices,true).join('\n').slice(0,3800)}\n\n**1인 몫 합계 ${formatMeso(clearedValue(w.cleared,prices))}**`)
+  const emb=base().setTitle(`${safe(character.name)} · ${weekLabel(w.week)} 편집`).setDescription(`${clearedBlock(w.cleared,prices,true,3800,'클리어 없음')}\n**1인 몫 합계 ${formatMeso(clearedValue(w.cleared,prices))}**`)
     .setFooter({text:'보스를 고르고 함께 클리어한 인원을 선택하면 결정석 가격을 그 인원만큼 나눠요.'});
   const options=ordered(w.cleared).slice(0,25).map(({b,index:i,no})=>({label:truncate(no?`${no}. ${b.difficulty} ${b.name}`:`${b.difficulty} ${b.name} (월간)`),value:String(i),description:truncate(`${b.partySize??1}인 · 최대 ${entryLimit(b)}인${entryPrice(b,prices)?` · 1인 ${formatMeso(entryShare(b,prices))}`:' · 가격 없음'}`)}));
   return {content:notice,embeds:[emb],components:[row(new StringSelectMenuBuilder().setCustomId(`mp:bhboss:${character.id}:${w.week}:${w.rev??0}`).setPlaceholder('인원을 바꿀 보스 선택').addOptions(options)),row(button(`mp:bhshow:${character.id}:${w.week}`,'히스토리로 돌아가기')),home()],allowedMentions:{parse:[]}};

@@ -52,7 +52,7 @@ test('full Discord command and persistent button flow creates party, character a
   // New handler instance after restart must still understand old stored buttons.
   const resumed=createHandler({service,guildId:'g',verifyContext:async()=>({...context}),resolveOwners:async()=>new Set(['u1'])});
   const open=fake('button',{customId:`mp:detail:${p.id}`});await resumed(open);
-  assert.equal(open.outputs[0].embeds[0].toJSON().fields[1].value,'1. 하드 선택받은 세렌');
+  assert.equal(open.outputs[0].embeds[0].toJSON().fields[1].value.replace(/```(ansi)?\n?|\u001b\[[\d;]*m/g,'').replace(/\s+/g,' ').trim(),'1. HARD 선택받은 세렌');
 });
 test('no mutation occurs when authoritative thread membership fails',async t=>{
   const {service,handler}=setup(t,async()=>{throw new DomainError('스레드에 먼저 참여하세요.','NOT_MEMBER');});
