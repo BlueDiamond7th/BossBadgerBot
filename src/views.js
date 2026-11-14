@@ -32,6 +32,16 @@ export function ansiBlock(lines,max=1024) {
   }
   return `${open}${kept.join('\n')}${close}`;
 }
+// Splits lines into several complete ansi blocks of at most `max` characters each (for multiple fields).
+export function ansiChunks(lines,max=1024) {
+  const chunks=[];let current=[];
+  for(const line of lines) {
+    if(current.length&&ansiBlock([...current,line],Infinity).length>max) {chunks.push(current);current=[];}
+    current.push(line);
+  }
+  if(current.length) chunks.push(current);
+  return chunks.map(c=>ansiBlock(c,max));
+}
 const truncate=(s,max=100)=>String(s).slice(0,max);
 export function paginate(items,page=0,size=15) {
   const pages=Math.max(1,Math.ceil(items.length/size));
@@ -207,11 +217,14 @@ export function schedulerDetail(character,history,index=0,page=0) {
 }
 
 // ---- 결정석 가격표 ----
+// One line per boss difficulty, cheapest first: "[badge] 보스명 · 가격 · 최대 N인".
 export function priceTable({prices,overrides}) {
-  const lines=pricedBosses().map(b=>`**${safe(b.name)}** (최대 ${b.maxParty}인${b.monthly?' · 월간':''})\n${b.priced.map(d=>`${d}${partyLimit(b,d)!==b.maxParty?`(${partyLimit(b,d)}인)`:''} ${formatMeso(prices[priceKey(b.id,d)])}${overrides.has(priceKey(b.id,d))?' ✏️':''}`).join(' · ')}`);
-  const emb=base().setTitle('결정석 가격표').setFooter({text:'✏️ 서버에서 수정한 가격 · /결정석 가격수정 보스 난이도 가격 · 노말 진 힐라 이하는 솔플 가정'});
-  const half=Math.ceil(lines.length/2);
-  emb.addFields({name:'보스 1',value:lines.slice(0,half).join('\n').slice(0,1024)},{name:'보스 2',value:lines.slice(half).join('\n').slice(0,1024)});
+  const rows=pricedBosses().flatMap(b=>b.priced.map(d=>({b,d,key:priceKey(b.id,d)}))).sort((x,y)=>prices[x.key]-prices[y.key]||BOSSES.indexOf(x.b)-BOSSES.indexOf(y.b));
+  const lines=rows.map(({b,d,key})=>`${bossBadge(d,b.name)} · ${formatMeso(prices[key])} · ${partyLimit(b,d)}인${b.monthly?' · 월간':''}${overrides.has(key)?' ✏️':''}`);
+  const chunks=ansiChunks(lines);
+  const emb=base().setTitle('결정석 가격표').setDescription(`가격이 낮은 순 · ${rows.length}개 · 인원은 결정석을 나누는 최대 인원`)
+    .addFields(chunks.map((value,i)=>({name:chunks.length>1?`가격표 ${i+1}/${chunks.length}`:'가격표',value})))
+    .setFooter({text:'✏️ 서버에서 수정한 가격 · /결정석 가격수정 보스 난이도 가격 · 노말 진 힐라 이하는 솔플 가정'});
   return {embeds:[emb],components:[home()],allowedMentions:{parse:[]}};
 }
 

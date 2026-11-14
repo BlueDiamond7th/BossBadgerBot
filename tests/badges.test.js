@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bossBadge, ansiBlock } from '../src/views.js';
+import { bossBadge, ansiBlock, ansiChunks, priceTable } from '../src/views.js';
+import { DEFAULT_CRYSTAL_PRICES } from '../src/catalog.js';
 
 const E='\u001b[';
 test('difficulty badges use the requested ANSI colours and line up boss names',()=>{
@@ -21,4 +22,29 @@ test('ansi blocks stay within the size limit and stay closed',()=>{
   assert.ok(out.length<=1024);assert.ok(out.startsWith('```ansi\n'));assert.ok(out.endsWith('\n```'));
   assert.match(out,/… 외 \d+개\n```$/);
   assert.equal(ansiBlock(lines.slice(0,2)).split('\n').length,4);
+});
+
+const rows=embed=>embed.fields.flatMap(f=>{assert.ok(f.value.length<=1024);assert.match(f.value,/^```ansi\n[\s\S]*\n```$/);return f.value.slice(8,-4).split('\n');});
+const clean=l=>l.replace(/\u001b\[[\d;]*m/g,'').replace(/\s+/g,' ').trim();
+test('crystal price table uses the same badges, one line per difficulty, cheapest first',()=>{
+  const prices={...DEFAULT_CRYSTAL_PRICES,'kalos:카오스':1_250_000_000};
+  const embed=priceTable({prices,overrides:new Set(['kalos:카오스'])}).embeds[0].toJSON();
+  const lines=rows(embed);
+  assert.equal(lines.length,39);assert.ok(JSON.stringify(embed).length<6000);
+  assert.equal(lines[0],`${bossBadge('하드','데미안')} · 4,640만 메소 · 6인`);
+  assert.equal(clean(lines.at(-1)),'EXTREME 발드릭스 · 96억 메소 · 3인');
+  const values=lines.map(l=>clean(l));
+  assert.ok(values.includes('CHAOS 감시자 칼로스 · 12억 5,000만 메소 · 6인 ✏️'));
+  assert.ok(values.includes('EXTREME 스우 · 5억 4,500만 메소 · 2인'));
+  assert.ok(values.includes('EXTREME 검은 마법사 · 56억 8,000만 메소 · 6인 · 월간'));
+  // Cheapest first: parse "N억 N만" back to meso and check the order.
+  const meso=l=>{const t=clean(l).split(' · ')[1].replace(/[, 메소]/g,'');const e=t.match(/(\d+)억/),m=t.match(/(\d+)만/);return (e?+e[1]*1e8:0)+(m?+m[1]*1e4:0);};
+  const amounts=lines.map(meso);assert.deepEqual(amounts,[...amounts].sort((a,b)=>a-b));
+  assert.match(embed.fields[0].name,/^가격표 1\/\d$/);
+});
+test('ansi chunks never split a line and keep every chunk closed',()=>{
+  const lines=Array.from({length:30},(_,i)=>`${String(i).padStart(2)} ${'가'.repeat(40)}`);
+  const chunks=ansiChunks(lines,300);
+  assert.ok(chunks.length>1);
+  assert.deepEqual(chunks.flatMap(c=>{assert.ok(c.length<=300);return c.slice(8,-4).split('\n');}),lines);
 });
