@@ -56,10 +56,15 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
     return view.schedulerDetail(tracker.character(ctx,id,true),tracker.schedulerHistory(ctx,id),index,page);
   }
   // One stored-power lookup for the characters on the shown page; no API calls.
-  function rosterView(ctx,s,page,owner,eligible=null) {
-    const shown=view.paginate(s.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner)),page,10).items;
-    return view.roster(s,page,owner,eligible,tracker?.latestPowers(ctx,shown.map(c=>c.id))??null);
+  // Stored level/power for every listed character (one query; no API), then a live
+  // participant check only for the registrants shown on the requested page.
+  async function rosterView(ctx,i,s,page=0,owner='all',minLevel=0) {
+    const ids=s.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner)).map(c=>c.id);
+    const stats=tracker?.latestStats(ctx,ids)??null,shown=view.rosterPage(s,{page,owner,minLevel,stats}).items;
+    await getEligible(ctx,i,shown.map(c=>c.ownerId));
+    return view.roster(s,page,owner,ctx.eligibleOwnerIds,stats,minLevel);
   }
+
   async function pushedUp(i) {
     if(!i.message?.id) return false;
     try {
@@ -153,7 +158,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         requireRule(record.sellerId===i.user.id,'판매자로 지정된 사람만 수정할 수 있어요.','FORBIDDEN');
         return await i.showModal(view.distModal(`mp:modal:distedit:${record.id}`,record));
       }
-      const privateSource=(i.isButton()||i.isStringSelectMenu()||i.isModalSubmit())&&i.message?.flags?.has(MessageFlags.Ephemeral);
+      const privateSource=(i.isButton()||i.isStringSelectMenu()||i.isUserSelectMenu?.()||i.isModalSubmit())&&i.message?.flags?.has(MessageFlags.Ephemeral);
       if(privateSource) await i.deferUpdate();
       else await i.deferReply({flags:MessageFlags.Ephemeral});
       const ctx=await verifyContext(i,guildId),rid=i.id;
@@ -175,11 +180,9 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
           if(sub==='스케줄러') payload=scheduler(ctx,get('캐릭터'));
           if(sub==='스케줄러갱신') {requireRule(tracker,'스케줄러 기능을 사용할 수 없어요.');const result=await tracker.syncScheduler(ctx,get('캐릭터'));payload=scheduler(ctx,get('캐릭터'));if(result.cached)payload.content='5분 이내 수집한 기록을 보여드려요.';}
           if(sub==='목록') {
-            const owner=i.options.getUser('등록자')?.id??'all',s=service.snapshot(ctx);
-            const shown=view.paginate(s.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner)),0,10).items;
-            await getEligible(ctx,i,shown.map(c=>c.ownerId));payload=rosterView(ctx,s,0,owner,ctx.eligibleOwnerIds);
+            payload=await rosterView(ctx,i,service.snapshot(ctx),0,i.options.getUser('등록자')?.id??'all');
           }
-          if(sub==='수정') {service.editCharacter(ctx,get('캐릭터'),{name:get('이름')??undefined},rid);changed=true;payload=rosterView(ctx,service.snapshot(ctx),0,ctx.userId);}
+          if(sub==='수정') {service.editCharacter(ctx,get('캐릭터'),{name:get('이름')??undefined},rid);changed=true;payload=await rosterView(ctx,i,service.snapshot(ctx),0,ctx.userId);}
           if(sub==='스펙') payload=specs(ctx,get('캐릭터'));
           if(sub==='스펙갱신') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');const result=await tracker.sync(ctx,get('캐릭터'));changed=!result.cached;payload=specs(ctx,get('캐릭터'));}
           if(sub==='환산기록') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');tracker.recordManual(ctx,get('캐릭터'),i.options.getNumber('수치'),get('종류'),rid);payload=specs(ctx,get('캐릭터'));}
@@ -241,8 +244,13 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         if(action==='specsync') {requireRule(tracker,'스펙 추적 기능을 사용할 수 없어요.');const result=await tracker.sync(ctx,id);changed=!result.cached;payload=specs(ctx,id);}
         if(action==='board') {payload=view.board(service.snapshot(ctx),schedules?.list(ctx)??[]);changed=true;}
         if(action==='roster') {
-          const s=service.snapshot(ctx),page=Number(a),shown=view.paginate(s.characters.filter(c=>c.active&&(id==='all'||c.ownerId===id)),page,10).items;
-          await getEligible(ctx,i,shown.map(c=>c.ownerId));payload=rosterView(ctx,s,page,id,ctx.eligibleOwnerIds);
+          payload=await rosterView(ctx,i,service.snapshot(ctx),Number(a)||0,id,Number(b)||0);
+        }
+        // Filters keep the other filter and restart from the first page.
+        if(action==='rosterowner'||action==='rosterall'||action==='rosterlvl') {
+          const owner=action==='rosterowner'?selected:action==='rosterall'?'all':id,minLevel=Number(action==='rosterlvl'?a:id)||0;
+          requireRule(owner==='all'||/^[0-9A-Za-z_-]{1,32}$/.test(owner),'등록자를 다시 선택해 주세요.');
+          payload=await rosterView(ctx,i,service.snapshot(ctx),0,owner,[0,285,290].includes(minLevel)?minLevel:0);
         }
         if(action==='parties') payload=view.partyList(service.snapshot(ctx),Number(a),id==='archived');
         if(action==='open'||action==='detail') payload=await detail(ctx,i,selected??id);

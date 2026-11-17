@@ -268,7 +268,7 @@ test('editor back button returns to the same week',async t=>{
 test('boss history is reached like 스펙 변화: roster button → character picker → history, with a way back',async t=>{
   const {handler,service,chars}=await handlerFor(t);
   const roster=fake('button',{customId:'mp:roster:all:0'});await handler(roster);
-  const tools=roster.outputs[0].components[1].toJSON().components;
+  const tools=roster.outputs[0].components.map(r=>r.toJSON().components).find(r=>r.some(b=>b.label==='스펙 변화'));
   assert.deepEqual(tools.map(b=>b.label),['캐릭터 추가 / 삭제','스펙 변화','보스 히스토리','내 스케줄러']);
   // u1 sees their own character first, then the party member's; u3 (no shared party) is not listed.
   const picker=fake('button',{customId:tools[2].custom_id});await handler(picker);
