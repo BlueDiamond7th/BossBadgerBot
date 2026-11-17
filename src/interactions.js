@@ -93,7 +93,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
   async function detail(ctx,i,id) {
     const p=service.getParty(ctx,id,true),s=service.snapshot(ctx);
     await getEligible(ctx,i,p.characterIds.map(cid=>s.characters.find(c=>c.id===cid)?.ownerId).filter(Boolean));
-    return view.partyDetail(s,p,ctx,service.warnings(s,p),prices?priceMap(ctx.guildId):null);
+    return view.partyDetail(s,p,ctx,service.warnings(s,p),prices?priceMap(ctx.guildId):null,{stats:tracker?.latestStats(ctx,p.characterIds)??null,distributions:distributions?.list(ctx,p.id)??null});
   }
   async function withPartyOwners(ctx,i,id) {
     const s=service.snapshot(ctx),p=service.getParty(ctx,id,true);

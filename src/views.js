@@ -85,20 +85,31 @@ export function partyList(state,page=0,archived=false) {
   components.push(home());
   return {embeds:[base().setTitle(archived?'파티 보관함':'우리 보스방의 파티').setDescription(view.items.map(p=>`**${safe(p.name)}**\n${p.characterIds.length}명 · 보스 ${p.bosses.length}개 · 만든 사람 <@${p.creatorId}>`).join('\n\n')||'아직 파티가 없어요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개`})],components,allowedMentions:{parse:[]}};
 }
-export function partyDetail(state,p,ctx,warnings=[],prices=null) {
+// Party screen: characters (link · level · job · @owner) with average power, bosses merged with
+// expected income, and recorded extra distributions.
+export function partyDetail(state,p,ctx,warnings=[],prices=null,{stats=null,distributions=null}={}) {
   const chars=p.characterIds.map(id=>state.characters.find(c=>c.id===id)).filter(Boolean);
   const canEdit=ctx.isManager||p.creatorId===ctx.userId;
-  const emb=base().setTitle(`${p.archived?'📦':'⚔️'} ${safe(p.name)}`).setDescription(`만든 사람 <@${p.creatorId}> · ${chars.length}명${p.archived?' · 보관됨':''}`).addFields(
-    {name:'파티 캐릭터',value:chars.slice(0,12).map(c=>`• **${safe(c.name)}** · ${safe(c.job??'직업 미확인')} · <@${c.ownerId}>${ctx.eligibleOwnerIds&&!ctx.eligibleOwnerIds.has(c.ownerId)?' ⚠️ 현재 참가자 아님':''}`).join('\n').slice(0,1000)||'아직 비어 있어요. 아래에서 캐릭터를 추가하세요.'},
-    {name:'등록 보스',value:p.bosses.length?ansiBlock(p.bosses.map((b,i)=>`${String(i+1).padStart(2)}. ${bossBadge(b.difficulty,bossById(b.bossId)?.name??b.bossId)}`)):'보스가 아직 등록되지 않았어요.'}
-  ).setFooter({text:`구성 버전 ${p.version} · 캐릭터·보스 변경은 이 파티에만 반영돼요.`});
+  const memberLines=chars.slice(0,12).map(c=>`· [**${safe(c.name)}**](${scouterUrl(c.name)}) · Lv.${stats?.get(c.id)?.level??'?'} · ${safe(c.job??'직업 미확인')} · <@${c.ownerId}>${ctx.eligibleOwnerIds&&!ctx.eligibleOwnerIds.has(c.ownerId)?' ⚠️ 현재 참가자 아님':''}`);
+  const known=chars.map(c=>stats?.get(c.id)?.power).filter(v=>v!=null&&/^\d+$/.test(String(v))).map(v=>BigInt(v));
+  if(chars.length) memberLines.push(`평균 전투력 **${known.length?power(String(known.reduce((a,b)=>a+b,0n)/BigInt(known.length))):'미수집'}**${known.length<chars.length?` (${known.length}/${chars.length}명 수집)`:''}`);
+  const description=`만든 사람 <@${p.creatorId}> · ${chars.length}명${p.archived?' · 보관됨':''}\n\n**파티 캐릭터**\n${memberLines.join('\n')||'아직 비어 있어요. 아래에서 캐릭터를 추가하세요.'}`;
+  const emb=base().setTitle(`${p.archived?'📦':'⚔️'} ${safe(p.name)}`).setDescription(description.slice(0,4000)).setFooter({text:`구성 버전 ${p.version} · 캐릭터·보스 변경은 이 파티에만 반영돼요.`});
   if(chars.length>12) emb.addFields({name:'전체 구성원',value:`총 ${chars.length}명 중 12명을 표시했어요. 캐릭터 목록이나 제외 메뉴에서 나머지를 확인하세요.`});
-  if(warnings.length) emb.addFields({name:'편성 확인',value:warnings.slice(0,3).map(safe).join('\n').slice(0,1000)});
-  if(prices&&p.bosses.length) {
-    const r=partyRevenue(p,prices);
-    const lines=r.lines.map(x=>`${bossBadge(x.difficulty,x.boss?.name??'알 수 없는 보스')} ${x.price?`${strong(formatMeso(x.share))} (${formatMeso(x.price)} ÷ ${x.divisor}명${x.boss.monthly?' · 월간':''})`:'솔플 가정 · 가격 없음'}`);
-    emb.addFields({name:'결정석 수익 · 1인 기준',value:`${ansiBlock(lines,960)}**주간 합계 ${formatMeso(r.weekly)}**${r.monthly?` · 월간 ${formatMeso(r.monthly)}`:''}`});
+  if(p.bosses.length) {
+    if(prices) {
+      const r=partyRevenue(p,prices),rows=r.lines.map((x,index)=>({x,monthly:Boolean(x.boss?.monthly),index}));
+      let no=0;
+      const lines=[...rows.filter(r=>!r.monthly),...rows.filter(r=>r.monthly)].map(({x,monthly})=>`${monthly?' •':`${String(++no).padStart(2)}.`} ${bossBadge(x.difficulty,x.boss?.name??'알 수 없는 보스')} (${monthly?'월간 · ':''}${x.price?x.divisor:1}인) : ${x.price?strong(formatMeso(x.share)):'가격 없음'}`);
+      emb.addFields({name:'등록 보스 및 예상 수익',value:`${ansiBlock(lines,960)}**주간 합계 ${formatMeso(r.weekly)}**${r.monthly?` · 월간 ${formatMeso(r.monthly)}`:''}`});
+    } else emb.addFields({name:'등록 보스',value:ansiBlock(p.bosses.map((b,i)=>`${String(i+1).padStart(2)}. ${bossBadge(b.difficulty,bossById(b.bossId)?.name??b.bossId)}`))});
+  } else emb.addFields({name:'등록 보스 및 예상 수익',value:'보스가 아직 등록되지 않았어요.'});
+  if(distributions) {
+    const recent=distributions.slice(0,3).map(d=>{const r=distribution(d.price,d.memberCount);return `• ${safe(d.item)} · ${formatMeso(d.price)} · 분배자 <@${d.sellerId}> · 1인 **${formatMeso(d.mvp?r.mvpShare:r.share)}**${d.mvp?' (MVP)':''}`;});
+    if(distributions.length>3) recent.push(`외 ${distributions.length-3}건 · 분배 기록에서 모두 볼 수 있어요.`);
+    emb.addFields({name:'추가 분배수익',value:recent.join('\n').slice(0,1024)||'없음'});
   }
+  if(warnings.length) emb.addFields({name:'편성 확인',value:warnings.slice(0,3).map(safe).join('\n').slice(0,1000)});
   const components=[];const token=`${p.id}:0:${p.version}`;
   if(canEdit&&!p.archived) components.push(row(button(`mp:addmember:${token}`,'캐릭터 추가',ButtonStyle.Primary),button(`mp:delmember:${token}`,'캐릭터 제외'),button(`mp:addboss:${token}`,'보스 추가',ButtonStyle.Primary),button(`mp:delboss:${token}`,'보스 제외')));
   const secondary=[button(`mp:copy:${p.id}`,'구성 복사')];
@@ -237,12 +248,11 @@ const ordered=cleared=>{
   return [...rows.filter(r=>!r.b.monthly),...rows.filter(r=>r.b.monthly)].map(r=>({...r,no:r.b.monthly?null:++no}));
 };
 // Lines for an ansi block: "1. [badge] 보스명 · 가격 ÷ N명 = 1인 몫"; monthly bosses get "•" and "(월간)".
-const clearedLines=(cleared,prices,split=false)=>ordered(cleared).map(({b,no})=>{
-  const price=entryPrice(b,prices),label=`${split&&no?`${String(no).padStart(2)}.`:' •'} ${bossBadge(b.difficulty,b.name)}${b.monthly?' (월간)':''}`;
-  if(!price) return `${label}${split?' · 가격 없음':''}`;
-  return split?`${label} · ${formatMeso(price)} ÷ ${b.partySize??1}명 = ${strong(formatMeso(entryShare(b,prices)))}`:`${label} · ${formatMeso(price)}`;
+const clearedLines=(cleared,prices)=>ordered(cleared).map(({b,no})=>{
+  const price=entryPrice(b,prices),size=b.partySize??1;
+  return `${no?`${String(no).padStart(2)}.`:' •'} ${bossBadge(b.difficulty,b.name)} (${b.monthly?'월간 · ':''}${size}인) : ${price?strong(formatMeso(entryShare(b,prices))):'가격 없음'}`;
 });
-const clearedBlock=(cleared,prices,split,max,empty)=>cleared.length?ansiBlock(clearedLines(cleared,prices,split),max):empty;
+const clearedBlock=(cleared,prices,split,max,empty)=>cleared.length?ansiBlock(clearedLines(cleared,prices),max):empty;
 const count=(n,limit)=>`${n??'?'}/${limit??'?'}`;
 // Loaded (not yet saved) week opened from the history: save / skip / refresh / back.
 export function bossRecord(record,prices,{fetched=false,refreshed=null}={}) {
