@@ -176,8 +176,8 @@ test('crystal price command updates the table shown in party revenue',async t=>{
   const set=command('결정석','가격수정',{'보스':'kalos','난이도':'카오스','가격':'13억'});await handler(set);
   assert.match(set.outputs[0].content,/12억 3,000만 메소 → 13억 메소/);
   const detail=fake('button',{customId:`mp:detail:${party.id}`});await handler(detail);
-  const field=detail.outputs[0].embeds[0].toJSON().fields.find(f=>f.name.startsWith('결정석 수익'));
-  assert.deepEqual(block(field.value),['CHAOS 감시자 칼로스 6억 5,000만 메소 (13억 메소 ÷ 2명)']);assert.match(field.value,/\*\*주간 합계 6억 5,000만 메소\*\*$/);
+  const field=detail.outputs[0].embeds[0].toJSON().fields.find(f=>f.name==='등록 보스 및 예상 수익');
+  assert.deepEqual(block(field.value),['1. CHAOS 감시자 칼로스 (2인) : 6억 5,000만 메소']);assert.match(field.value,/\*\*주간 합계 6억 5,000만 메소\*\*$/);
 });
 
 test('saved clears can be split by party size up to each boss limit, owner only, and survive re-saving',async t=>{
@@ -227,7 +227,7 @@ test('picking an unsaved week loads a preview once; saving makes it a saved week
     const again=fake('select',{customId:`mp:bhpick:${chars.u1.id}`,values:['2026-11-05']});await handler(again);
     const emb=again.outputs[0].embeds[0].toJSON();
     assert.equal(again.outputs[0].content,null);assert.equal(emb.title,'도토리 · 11월 1주차 (11/5~11/11)');
-    assert.ok(block(emb.description).includes('2. CHAOS 감시자 칼로스 · 12억 3,000만 메소 ÷ 2명 = 6억 1,500만 메소'));
+    assert.ok(block(emb.description).includes('2. CHAOS 감시자 칼로스 (2인) : 6억 1,500만 메소'));
     assert.ok(!JSON.stringify(again.outputs[0].components.map(r=>r.toJSON())).includes('bhsave'));
   }
   // Old "지난주 불러오기" buttons from earlier messages also show the saved week.
@@ -341,14 +341,38 @@ test('monthly bosses are listed last without a number, and editing still targets
   ];
   repository.db.prepare('INSERT INTO boss_history VALUES(?,?,?,?,?,?,?)').run('g','t',chars.u1.id,'2026-11-05',JSON.stringify({week:'2026-11-05',day:'2026-11-11',clearCount:2,clearLimit:12,cleared}),'u1',1);
   const open=command('보스기록','히스토리',{'캐릭터':chars.u1.id});await handler(open);
-  assert.deepEqual(block(open.outputs[0].embeds[0].toJSON().description).map(l=>l.split(' · ')[0]),
-    ['1. EXTREME 스우','2. CHAOS 감시자 칼로스','• EXTREME 검은 마법사 (월간)']);
+  assert.deepEqual(block(open.outputs[0].embeds[0].toJSON().description),['1. EXTREME 스우 (1인) : 5억 4,500만 메소','2. CHAOS 감시자 칼로스 (1인) : 12억 3,000만 메소','• EXTREME 검은 마법사 (월간 · 1인) : 56억 8,000만 메소']);
   const edit=fake('button',{customId:`mp:bhedit:${chars.u1.id}:2026-11-05`});await handler(edit);
   const options=edit.outputs[0].components[0].toJSON().components[0].options;
   assert.deepEqual(options.map(o=>[o.label,o.value]),[['1. 익스트림 스우','0'],['2. 카오스 감시자 칼로스','2'],['익스트림 검은 마법사 (월간)','1']]);
-  assert.deepEqual(block(edit.outputs[0].embeds[0].toJSON().description).map(l=>l.split(' · ')[0]),['1. EXTREME 스우','2. CHAOS 감시자 칼로스','• EXTREME 검은 마법사 (월간)']);
+  assert.deepEqual(block(edit.outputs[0].embeds[0].toJSON().description),['1. EXTREME 스우 (1인) : 5억 4,500만 메소','2. CHAOS 감시자 칼로스 (1인) : 12억 3,000만 메소','• EXTREME 검은 마법사 (월간 · 1인) : 56억 8,000만 메소']);
   // Picking "2. 카오스 감시자 칼로스" edits the 칼로스 entry, not the monthly one stored between them.
   const pick=fake('select',{customId:options.length&&edit.outputs[0].components[0].toJSON().components[0].custom_id,values:['2']});await handler(pick);
   await handler(fake('select',{customId:pick.outputs[0].components[0].toJSON().components[0].custom_id,values:['3']}));
   assert.deepEqual(records.week(ctx(),chars.u1.id,'2026-11-05').week.cleared.map(b=>b.partySize??1),[1,1,3]);
+});
+
+test('party screen: linked members with level and average power, merged bosses and income, extra distributions',async t=>{
+  const {handler,service,party,chars,repository,distributions}=await handlerFor(t);
+  // u1 has a spec snapshot (level 290, power 1억); u2 only has the account list level (280) and no power.
+  repository.db.prepare('INSERT INTO spec_snapshots VALUES(?,?,?,?,?,?,?)').run('s1','g','t',chars.u1.id,1,'2026-11-12',JSON.stringify({level:290,combatPower:'100000000',equipment:{},skills:{}}));
+  for(const [boss,diff] of [['adversary','하드'],['blackmage','익스트림'],['baldrix','노말'],['lotus','노말']]) service.addBoss(ctx(),party.id,boss,diff,`b-${boss}`);
+  const open=fake('button',{customId:`mp:detail:${party.id}`});await handler(open);
+  const emb=open.outputs[0].embeds[0].toJSON();
+  const members=emb.description.split('**파티 캐릭터**\n')[1].split('\n');
+  assert.equal(members[0],`· [**도토리**](https://maplescouter.com/ko/info?name=${encodeURIComponent('도토리')}) · Lv.290 · 히어로 · <@u1>`);
+  assert.match(members[1],/^· \[\*\*모찌\*\*\]\([^)]+\) · Lv\.280 · 히어로 · <@u2>$/);
+  assert.equal(members[2],'평균 전투력 **1억** (1/2명 수집)');
+  const bosses=emb.fields.find(f=>f.name==='등록 보스 및 예상 수익');
+  assert.deepEqual(block(bosses.value),[
+    '1. HARD 최초의 대적자 (2인) : 6억 9,500만 메소',
+    '2. NORMAL 발드릭스 (2인) : 6억 6,000만 메소',
+    '3. NORMAL 스우 (1인) : 가격 없음',
+    '• EXTREME 검은 마법사 (월간 · 2인) : 28억 4,000만 메소']);
+  assert.match(bosses.value,/\*\*주간 합계 13억 5,500만 메소\*\* · 월간 28억 4,000만 메소$/);
+  assert.equal(emb.fields.find(f=>f.name==='추가 분배수익').value,'없음');
+  assert.ok(!emb.fields.some(f=>f.name.startsWith('결정석 수익')),'income is no longer a separate field');
+  distributions.create(ctx(),{partyId:party.id,sellerId:'u2',item:'미트라의 분노',price:'10억'},'d1');
+  const again=fake('button',{customId:`mp:detail:${party.id}`});await handler(again);
+  assert.equal(again.outputs[0].embeds[0].toJSON().fields.find(f=>f.name==='추가 분배수익').value,'• 미트라의 분노 · 10억 메소 · 분배자 <@u2> · 1인 **4억 5,125만 메소**');
 });

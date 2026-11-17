@@ -147,6 +147,25 @@ export class SpecTracker {
     }
     return result;
   }
+  // Latest stored level and combat power per character; never calls the API.
+  // Level falls back to the connected account's candidate list (one decrypt per owner).
+  latestStats(ctx,ids) {
+    const powers=this.latestPowers(ctx,ids),result=new Map(ids.map(id=>[id,{power:powers.get(id)??null,level:null}]));
+    if(!ids.length) return result;
+    for(const row of this.repo.db.prepare(`SELECT character_id,json_extract(data_json,'$.level') AS level,MAX(collected_at) FROM spec_snapshots
+      WHERE guild_id=? AND thread_id=? AND character_id IN (${ids.map(()=>'?').join(',')}) GROUP BY character_id`).all(ctx.guildId,ctx.threadId,...ids)) if(Number.isInteger(row.level)) result.get(row.character_id).level=row.level;
+    const missing=ids.filter(id=>result.get(id).level==null);
+    if(missing.length&&this.connections?.vault?.configured) {
+      const bindings=this.repo.db.prepare(`SELECT character_id,user_id,identity_hash FROM personal_characters WHERE guild_id=? AND thread_id=? AND character_id IN (${missing.map(()=>'?').join(',')})`).all(ctx.guildId,ctx.threadId,...missing);
+      for(const owner of new Set(bindings.map(b=>b.user_id))) {
+        try {
+          const levels=new Map(this.connections.candidates({...ctx,userId:owner}).map(c=>[this.connections.vault.fingerprint(c.ocid),c.level]));
+          for(const b of bindings.filter(b=>b.user_id===owner)) if(Number.isInteger(levels.get(b.identity_hash))) result.get(b.character_id).level=levels.get(b.identity_hash);
+        } catch {/* An unreadable candidate list only hides the level. */}
+      }
+    }
+    return result;
+  }
   prune() {
     this.repo.db.prepare('DELETE FROM scheduler_snapshots WHERE day<?').run(kstDay(this.now()-13*86400_000));
     this.repo.db.prepare('DELETE FROM spec_snapshots WHERE collected_at<?').run(this.now()-RETENTION_MS);
