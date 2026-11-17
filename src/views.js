@@ -1,13 +1,15 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder, LabelBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown } from 'discord.js';
 import { specChanges } from './specs.js';
 import { BOSSES, bossById, priceKey, partyLimit } from './catalog.js';
-import { formatMeso, partyRevenue, pricedBosses, distribution } from './revenue.js';
+import { formatMeso, partyRevenue, pricedBosses, splitShares, equalRatios, MAX_SPLIT } from './revenue.js';
 import { clearedValue, entryLimit, entryPrice, entryShare } from './records.js';
 
 export const safe=value=>escapeMarkdown(String(value)).replace(/@/g,'＠');
 export const button=(id,label,style=ButtonStyle.Secondary,disabled=false)=>new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style).setDisabled(disabled);
 const row=(...items)=>new ActionRowBuilder().addComponents(...items);
-export const home=()=>row(button('mp:board','보스방'),button('mp:roster:all:0','캐릭터'),button('mp:parties:active:0','파티'));
+export const navButtons=()=>[button('mp:board','보스방'),button('mp:roster:all:0','캐릭터'),button('mp:parties:active:0','파티')];
+// Bottom navigation row; the party-free distribution calculator sits next to 보스방·캐릭터·파티.
+export const home=()=>row(...navButtons(),button('mp:calc','분배금 계산'));
 const base=()=>new EmbedBuilder().setColor(0x46745b);
 // ---- Difficulty badges (Discord ANSI code block; colours show on desktop/web) ----
 const ESC='\u001b[';
@@ -139,7 +141,7 @@ export function partyDetail(state,p,ctx,warnings=[],prices=null,{stats=null,dist
     } else emb.addFields({name:'등록 보스',value:ansiBlock(p.bosses.map((b,i)=>`${String(i+1).padStart(2)}. ${bossBadge(b.difficulty,bossById(b.bossId)?.name??b.bossId)}`))});
   } else emb.addFields({name:'등록 보스 및 예상 수익',value:'보스가 아직 등록되지 않았어요.'});
   if(distributions) {
-    const recent=distributions.slice(0,3).map(d=>{const r=distribution(d.price,d.memberCount);return `• ${safe(d.item)} · ${formatMeso(d.price)} · 분배자 <@${d.sellerId}> · 1인 **${formatMeso(d.mvp?r.mvpShare:r.share)}**${d.mvp?' (MVP)':''}`;});
+    const recent=distributions.slice(0,3).map(d=>{const r=splitShares(d.price,d.ratios,d.mvp),even=d.ratios.every(x=>x===d.ratios[0]);return `• ${safe(d.item)} · ${formatMeso(d.price)} · 분배자 <@${d.sellerId}> · ${even?`1인 **${formatMeso(r.shares[0])}**`:`비율 ${d.ratios.join(':')}`}${d.mvp?' (MVP)':''}`;});
     if(distributions.length>3) recent.push(`외 ${distributions.length-3}건 · 분배 기록에서 모두 볼 수 있어요.`);
     emb.addFields({name:'추가 분배수익',value:recent.join('\n').slice(0,1024)||'없음'});
   }
@@ -148,7 +150,7 @@ export function partyDetail(state,p,ctx,warnings=[],prices=null,{stats=null,dist
   if(canEdit&&!p.archived) components.push(row(button(`mp:addmember:${token}`,'캐릭터 추가',ButtonStyle.Primary),button(`mp:delmember:${token}`,'캐릭터 제외'),button(`mp:addboss:${token}`,'보스 추가',ButtonStyle.Primary),button(`mp:delboss:${token}`,'보스 제외')));
   const secondary=[button(`mp:copy:${p.id}`,'구성 복사')];
   if(!p.archived) secondary.push(button(`sc:start:${p.id}`,'일정 잡기'));
-  if(!p.archived) secondary.push(button(`mp:dist:${p.id}`,'분배금 계산'));
+  if(!p.archived) secondary.push(button(`mp:dist:${p.id}`,'분배수익 추가'));
   if(canEdit) secondary.push(button(`mp:archive:${p.id}:${p.version}:${p.archived?'restore':'store'}`,p.archived?'복원':'보관'));
   secondary.push(button(`mp:detail:${p.id}`,'새로고침'));
   components.push(row(...secondary),home());
@@ -341,11 +343,50 @@ export function partySizePicker({character,week:w},index,prices) {
 }
 
 // ---- 분배금 ----
-export function distQuestion(p) {
-  return {content:`**${safe(p.name)}** · 분배할 아이템이 있나요?`,embeds:[],components:[row(button(`mp:distyes:${p.id}`,'예',ButtonStyle.Primary),button(`mp:distno:${p.id}`,'아니오')),row(button(`mp:distlist:${p.id}:0`,'분배 기록'),button(`mp:detail:${p.id}`,'파티로 돌아가기')),home()],allowedMentions:{parse:[]}};
+const LETTERS='ABCDEF';
+const feeText=mvp=>mvp?'× 0.97 · MVP 할인':'× 0.95';
+const splitLines=(labels,split,distributor=0)=>labels.map((label,i)=>`**${label}**${i===distributor?' (분배자)':''} · 비율 ${split.ratios[i]} : **${formatMeso(split.shares[i])}**`);
+const formulaField=split=>({name:'계산식',value:`실수령액 = 거래금 ${feeText(split.fee===0.97)}\n각자 받는 금액 = 실수령액 × 비율 ÷ ${split.total} ${split.fee===0.97?'× 0.97':'× 0.95'} (분배자 포함)`});
+// ---- 분배금 계산 (party-free calculator; state lives in button IDs, nothing is stored) ----
+export function calcModal() {
+  return new ModalBuilder().setCustomId('mp:modal:calc').setTitle('분배금 계산').addLabelComponents(
+    new LabelBuilder().setLabel('거래금 (경매장 판매 금액)').setDescription('예: 25억, 4억 6500만, 2500000000').setTextInputComponent(new TextInputBuilder().setCustomId('price').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(30)),
+    new LabelBuilder().setLabel('분배 인원수').setStringSelectMenuComponent(new StringSelectMenuBuilder().setCustomId('members').setMinValues(1).setMaxValues(1).addOptions(Array.from({length:MAX_SPLIT},(_,i)=>({label:`${i+1}명`,value:String(i+1),default:i===1})))));
 }
-export function distSellerPicker(p) {
-  return {content:`**${safe(p.name)}** · 판매자를 선택하세요. 파티에 캐릭터가 편성된 사람만 선택할 수 있어요.`,embeds:[],components:[row(new UserSelectMenuBuilder().setCustomId(`mp:distseller:${p.id}`).setPlaceholder('판매자 @선택').setMinValues(1).setMaxValues(1)),row(button(`mp:detail:${p.id}`,'취소')),home()],allowedMentions:{parse:[]}};
+const calcState=({price,ratios,mvp})=>`${price}:${ratios.join('')}:${mvp?1:0}`;
+export function calcCard(state,notice=null) {
+  const split=splitShares(state.price,state.ratios,state.mvp),labels=[...LETTERS.slice(0,state.ratios.length)];
+  const emb=base().setTitle('분배금 계산 결과').setDescription(`거래금 **${formatMeso(state.price)}** → 실수령액 **${formatMeso(split.net)}** (${feeText(state.mvp)})\n\n${splitLines(labels,split).join('\n')}`)
+    .addFields(formulaField(split)).setFooter({text:'A가 분배자예요 · 비율은 1~9 · 기록은 저장하지 않아요. 파티 기록은 파티 화면의 분배수익 추가를 이용하세요.'});
+  return {content:notice,embeds:[emb],components:[row(button(`mp:calcadj:${calcState(state)}`,'분배 비율 조정',ButtonStyle.Primary),button(`mp:calcmvp:${calcState(state)}`,state.mvp?'MVP 할인 해제':'MVP 할인 적용',state.mvp?ButtonStyle.Success:ButtonStyle.Secondary)),home()],allowedMentions:{parse:[]}};
+}
+// Shared ratio editor: pick a person, pick 1~9, then reset or apply. Draft ratios ride in the button IDs.
+export function ratioEditor({title,labels,ratios,target=null,ids,price,mvp},notice=null) {
+  const split=splitShares(price,ratios,mvp);
+  const emb=base().setTitle(title).setDescription(`${labels.map((label,i)=>`${i===target?'▶ ':''}**${label}**${i===0?' (분배자)':''} · 비율 ${ratios[i]} : ${formatMeso(split.shares[i])}`).join('\n')}`)
+    .setFooter({text:'대상을 고르고 비율(1~9)을 정한 뒤 비율 반영을 눌러 주세요.'});
+  const components=[row(new StringSelectMenuBuilder().setCustomId(ids.pick).setPlaceholder('비율을 바꿀 사람').addOptions(labels.map((label,i)=>({label:truncate(label),value:String(i),default:i===target}))))];
+  if(target!==null) components.push(row(new StringSelectMenuBuilder().setCustomId(ids.set(target)).setPlaceholder(`${truncate(labels[target],60)} 비율`).addOptions(Array.from({length:9},(_,k)=>({label:`비율 ${k+1}`,value:String(k+1),default:ratios[target]===k+1})))));
+  components.push(row(button(ids.reset,'비율 초기화'),button(ids.apply,'비율 반영',ButtonStyle.Primary)),home());
+  return {content:notice,embeds:[emb],components,allowedMentions:{parse:[]}};
+}
+export function calcRatioEditor(state,target=null) {
+  const st=calcState(state),ones=equalRatios(state.ratios.length).join('');
+  return ratioEditor({title:'분배 비율 조정',labels:[...LETTERS.slice(0,state.ratios.length)],ratios:state.ratios,target,price:state.price,mvp:state.mvp,
+    ids:{pick:`mp:calcpick:${st}`,set:i=>`mp:calcratio:${st}:${i}`,reset:`mp:calcadj:${state.price}:${ones}:${state.mvp?1:0}`,apply:`mp:calcshow:${st}`}});
+}
+// ---- 분배수익 추가 (party only, stored) ----
+export function distAddModal(partyId) {
+  return new ModalBuilder().setCustomId(`mp:modal:distadd:${partyId}`).setTitle('분배수익 추가').addLabelComponents(
+    new LabelBuilder().setLabel('분배자').setDescription('파티에 캐릭터가 편성된 사람만 선택할 수 있어요.').setUserSelectMenuComponent(new UserSelectMenuBuilder().setCustomId('seller').setMinValues(1).setMaxValues(1)),
+    new LabelBuilder().setLabel('거래 품목').setTextInputComponent(new TextInputBuilder().setCustomId('item').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(60).setPlaceholder('예: 미트라의 분노')),
+    new LabelBuilder().setLabel('거래금 (경매장 판매 금액)').setTextInputComponent(new TextInputBuilder().setCustomId('price').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(30).setPlaceholder('예: 25억 또는 2500000000')));
+}
+const recordLabels=record=>record.members?record.members.map(m=>m.name):[...LETTERS.slice(0,record.memberCount)];
+export function distRatioEditor(record,ratios=record.ratios,target=null) {
+  const draft=ratios.join(''),ones=equalRatios(record.memberCount).join('');
+  return ratioEditor({title:`분배수익 조정 · ${record.item}`,labels:recordLabels(record),ratios,target,price:record.price,mvp:record.mvp,
+    ids:{pick:`mp:drpick:${record.id}:${draft}`,set:i=>`mp:drratio:${record.id}:${draft}:${i}`,reset:`mp:dradj:${record.id}:${ones}`,apply:`mp:drapply:${record.id}:${draft}`}});
 }
 export function distModal(customId,record=null) {
   const modal=new ModalBuilder().setCustomId(customId).setTitle(record?'분배 기록 수정':'분배 품목 입력').addComponents(
@@ -359,17 +400,11 @@ export function distModal(customId,record=null) {
   return modal;
 }
 export function distCard(record) {
-  const r=distribution(record.price,record.memberCount);
-  const lines=[`판매자 닉네임 : <@${record.sellerId}>`,'',`거래 품목 : ${safe(record.item)} 거래금 - ${formatMeso(r.price)}`,'',`판매자 실수령액 - ${formatMeso(r.net)}`];
-  if(record.mvp) lines.push(`MVP 할인가 - ${formatMeso(r.mvpNet)}`);
-  lines.push('',`최종 수령 금액 (${r.memberCount}명 기준) - ${formatMeso(r.share)}`);
-  if(record.mvp) lines.push(`MVP 할인가 - ${formatMeso(r.mvpShare)}`);
-  const formulas=['판매자 실수령액 = 거래금 × 0.95',`최종 수령 금액 = 실수령액 ÷ ${r.memberCount} × 0.95`];
-  if(record.mvp) formulas.push('MVP 실수령액 = 거래금 × 0.97',`MVP 최종 수령 금액 = MVP 실수령액 ÷ ${r.memberCount} × 0.97`);
-  const emb=base().setTitle(`분배금 계산 결과 · ${safe(record.partyName)}`).setDescription(lines.join('\n'))
-    .addFields({name:'계산식',value:formulas.join('\n')})
-    .setFooter({text:`n = 파티원 수 ${r.memberCount}명 (판매자 포함)${record.edits?` · 수정 ${record.edits}회`:''} · 품목·거래금·파티원 수 수정은 판매자만`});
-  return {embeds:[emb],components:[row(button(`mp:distedit:${record.id}`,'수정'),button(`mp:distmvp:${record.id}`,record.mvp?'MVP 할인 해제':'MVP 할인 적용',record.mvp?ButtonStyle.Success:ButtonStyle.Secondary)),home()],allowedMentions:{parse:[]}};
+  const split=splitShares(record.price,record.ratios,record.mvp);
+  const emb=base().setTitle(`분배수익 · ${safe(record.partyName)}`).setDescription(`분배자 <@${record.sellerId}>\n거래 품목 : **${safe(record.item)}**\n거래금 **${formatMeso(record.price)}** → 실수령액 **${formatMeso(split.net)}** (${feeText(record.mvp)})\n\n${splitLines(recordLabels(record).map(safe),split).join('\n')}`)
+    .addFields(formulaField(split))
+    .setFooter({text:`${record.memberCount}명 분배${record.edits?` · 수정 ${record.edits}회`:''} · 수정·MVP·비율 조정은 분배자만`});
+  return {embeds:[emb],components:[row(button(`mp:distedit:${record.id}`,'수정'),button(`mp:distmvp:${record.id}`,record.mvp?'MVP 할인 해제':'MVP 할인 적용',record.mvp?ButtonStyle.Success:ButtonStyle.Secondary),button(`mp:dradj:${record.id}:${record.ratios.join('')}`,'분배수익 조정',ButtonStyle.Primary))],allowedMentions:{parse:[]}};
 }
 export function distList(p,records,page=0) {
   const view=paginate(records,page,10),components=[];

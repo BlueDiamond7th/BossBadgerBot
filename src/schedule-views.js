@@ -1,5 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown } from 'discord.js';
-import { home as mainNavigation } from './views.js';
+import { navButtons } from './views.js';
 import { scheduleDate } from './schedule.js';
 import { bossById } from './catalog.js';
 const safe=s=>escapeMarkdown(String(s??'')).replace(/@/g,'＠');
@@ -7,7 +7,8 @@ const row=(...v)=>new ActionRowBuilder().addComponents(...v);
 const btn=(id,label,style=ButtonStyle.Secondary,disabled=false)=>new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style).setDisabled(disabled);
 const embed=()=>new EmbedBuilder().setColor(0x46745b);
 const names=(s,states)=>s.members.filter(m=>states.includes(s.responses[m.userId]?.state??'missing')).map(m=>safe(m.name)).join(', ').slice(0,550)||'-';
-export const home=()=>mainNavigation().addComponents(btn('sc:list:0','일정 목록'),btn('sc:mine:0','내 일정'));
+// A row holds at most five buttons: schedule screens keep 일정 목록·내 일정 instead of 분배금 계산.
+export const home=()=>row(...navButtons(),btn('sc:list:0','일정 목록'),btn('sc:mine:0','내 일정'));
 const bossNames=bosses=>bosses.map(b=>`${safe(b.difficulty)} ${safe(bossById(b.bossId)?.name??b.bossId)}`).join(' / ').slice(0,650)||'보스 없음';
 export const scheduleSummary=s=>`${scheduleDate(s.startAt)} · ${s.partyName}${s.status==='poll'?' (시간 투표)':s.status==='review'?' (검토 필요)':''}`;
 export function scheduleCard(s,book,now=book.now()) {
@@ -32,7 +33,7 @@ export function scheduleCard(s,book,now=book.now()) {
   if(ended||s.startAt<=now)controls=row(btn('sc:mine:0','내 다음 일정'),btn(`sc:open:${s.id}`,'이력 보기'));
   else if(s.status==='poll')controls=row(btn(`sc:vote:${s.id}:${s.version}`,'투표하기',ButtonStyle.Primary,s.deadline<=now),btn('sc:mine:0','내 일정'),btn(`sc:manage:${s.id}`,'관리'));
   else controls=row(btn(`sc:attend:${s.id}:${s.version}:yes`,'참석',ButtonStyle.Success,s.status!=='confirmed'),btn(`sc:attend:${s.id}:${s.version}:no`,'이번엔 불참',ButtonStyle.Danger,s.status!=='confirmed'),btn(`sc:attend:${s.id}:${s.version}:maybe`,'미정',ButtonStyle.Secondary,s.status!=='confirmed'),btn(`sc:personal:${s.id}`,'내 일정'),btn(`sc:manage:${s.id}`,'관리'));
-  return {embeds:[emb],components:[controls,mainNavigation().addComponents(btn('sc:list:0','일정 목록'))],allowedMentions:{parse:[]}};
+  return {embeds:[emb],components:[controls,row(...navButtons(),btn('sc:list:0','일정 목록'))],allowedMentions:{parse:[]}};
 }
 export function scheduleList(items,{mine=false,page=0,offset=0,past=false,partyId=null}={}) {
   const pages=Math.max(1,Math.ceil(items.length/8)),p=Math.max(0,Math.min(Number(page)||0,pages-1)),shown=items.slice(p*8,p*8+8);

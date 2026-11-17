@@ -74,8 +74,8 @@ test('only a party member can be the seller and only the seller can edit, with e
   const resized=book.update(ctx('u2'),'d1',{memberCount:'5'});assert.equal(resized.memberCount,5);
   for(const bad of ['0','7','2.5','다섯']) assert.throws(()=>book.update(ctx('u2'),'d1',{memberCount:bad}),/파티원 수/);
   const log=book.edits('d1');assert.equal(log.length,3);
-  assert.deepEqual(JSON.parse(log[0].after_json),{item:'창세의 뱃지',price:3_000_000_000,memberCount:5,mvp:true});
-  assert.deepEqual(JSON.parse(log[2].before_json),{item:'미트라의 분노',price:2_500_000_000,memberCount:3,mvp:false});
+  assert.deepEqual(JSON.parse(log[0].after_json),{item:'창세의 뱃지',price:3_000_000_000,memberCount:5,mvp:true,ratios:[1,1,1,1,1]});
+  assert.deepEqual(JSON.parse(log[2].before_json),{item:'미트라의 분노',price:2_500_000_000,memberCount:3,mvp:false,ratios:[1,1,1]});
   assert.equal(log[1].editor_id,'u2');
   assert.equal(book.list(ctx(),party.id).length,1);
   assert.throws(()=>book.get({...ctx(),threadId:'other'},'d1'),{code:'NOT_FOUND'});

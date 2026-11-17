@@ -139,36 +139,77 @@ async function handlerFor(t) {
   return {...f,...ids,handler,distributions,prices};
 }
 
-test('distribution flow: question, seller must be in party, result card, seller-only edits',async t=>{
-  const {handler,party,distributions}=await handlerFor(t);
-  const ask=fake('button',{customId:`mp:dist:${party.id}`});await handler(ask);
-  assert.match(ask.outputs[0].content,/분배할 아이템이 있나요/);
-  const no=fake('button',{customId:`mp:distno:${party.id}`});await handler(no);assert.match(no.outputs[0].content,/진행하지 않았어요/);
-  const yes=fake('button',{customId:`mp:distyes:${party.id}`});await handler(yes);
-  assert.equal(yes.outputs[0].components[0].toJSON().components[0].type,5);
-  const outsider=fake('user',{customId:`mp:distseller:${party.id}`,values:['u3']});await handler(outsider);
-  assert.equal(outsider.outputs[0].content,'해당 파티의 인원이 아닙니다.');assert.equal(outsider.outputs[0].flags,MessageFlags.Ephemeral);
-  const seller=fake('user',{customId:`mp:distseller:${party.id}`,values:['u2']});await handler(seller);
-  const modalId=seller.outputs[0].toJSON().custom_id;assert.equal(modalId,`mp:modal:dist:${party.id}:u2`);
-  const submit=fake('modal',{customId:modalId,fields:fields({item:'미트라의 분노',price:'10억'}),message:undefined});await handler(submit);
-  const card=submit.followUps[0].embeds[0].toJSON().description;
-  assert.match(card,/판매자 닉네임 : <@u2>/);assert.match(card,/거래금 - 10억 메소/);
-  assert.match(card,/판매자 실수령액 - 9억 5,000만 메소/);assert.match(card,/최종 수령 금액 \(2명 기준\) - 4억 5,125만 메소/);
-  assert.doesNotMatch(card,/MVP/);
-  const id=distributions.list(ctx(),party.id)[0].id;
-  const notSeller=fake('button',{customId:`mp:distedit:${id}`});await handler(notSeller);assert.match(notSeller.outputs[0].content,/판매자로 지정된 사람만/);
-  const edited=[];const publicMessage={flags:{has:()=>false},async edit(p){edited.push(p);}};
-  const mvp=fake('button',{user:{id:'u2'},customId:`mp:distmvp:${id}`,message:publicMessage});await handler(mvp);
-  assert.match(edited[0].embeds[0].toJSON().description,/MVP 할인가 - 9억 7,000만 메소[\s\S]*MVP 할인가 - 4억 7,045만 메소/);
-  const editOpen=fake('button',{user:{id:'u2'},customId:`mp:distedit:${id}`});await handler(editOpen);
-  const editModal=editOpen.outputs[0].toJSON();
-  assert.equal(editModal.components[1].components[0].value,'1000000000');assert.equal(editModal.components[2].components[0].value,'2');
-  const editSubmit=fake('modal',{user:{id:'u2'},customId:`mp:modal:distedit:${id}`,fields:fields({item:'미트라의 분노',price:'12억',members:'3'})});await handler(editSubmit);
-  const after=distributions.get(ctx(),id);assert.equal(after.price,1_200_000_000);assert.equal(after.memberCount,3);assert.equal(distributions.edits(id).length,2);
-  const editedCard=editSubmit.outputs[0].embeds[0].toJSON();
-  // 12억 × 0.97 = 11억 6,400만; ÷ 3 × 0.97 = 3억 7,636만
-  assert.match(editedCard.description,/최종 수령 금액 \(3명 기준\) - 3억 6,100만 메소\nMVP 할인가 - 3억 7,636만 메소/);
-  assert.equal(editedCard.fields[0].name,'계산식');assert.match(editedCard.fields[0].value,/MVP 최종 수령 금액 = MVP 실수령액 ÷ 3 × 0\.97$/);
+const users=ids=>({first:()=>ids[0]?{id:ids[0]}:undefined});
+test('분배수익 추가: one form (분배자 @, 품목, 거래금), party-member check, public card with per-character ratios',async t=>{
+  const {handler,party,distributions,chars}=await handlerFor(t);
+  // The party button opens the form directly; no "분배할 아이템이 있나요?" question.
+  const open=fake('button',{customId:`mp:dist:${party.id}`});await handler(open);
+  const form=open.outputs[0].toJSON();
+  assert.equal(form.custom_id,`mp:modal:distadd:${party.id}`);
+  assert.deepEqual(form.components.map(c=>[c.label,c.component.type]),[['분배자',5],['거래 품목',4],['거래금 (경매장 판매 금액)',4]]);
+  const fields=(seller,price='10억')=>({getSelectedUsers:()=>users([seller]),getTextInputValue:k=>({item:'미트라의 분노',price})[k]});
+  const outsider=fake('modal',{customId:form.custom_id,fields:fields('u3'),message:undefined});await handler(outsider);
+  assert.equal(outsider.outputs[0].content,'해당 파티의 인원이 아닙니다.');
+  const posted=[];const submit=fake('modal',{customId:form.custom_id,fields:fields('u2'),message:undefined,async followUp(p){posted.push(p);return {id:'card-msg'};}});await handler(submit);
+  const card=posted[0].embeds[0].toJSON();
+  assert.match(card.description,/^분배자 <@u2>\n거래 품목 : \*\*미트라의 분노\*\*\n거래금 \*\*10억 메소\*\* → 실수령액 \*\*9억 5,000만 메소\*\* \(× 0\.95\)/);
+  // Distributor first, both ×0.95: 9.5억 × 1/2 × 0.95 = 4억 5,125만.
+  assert.deepEqual(card.description.split('\n\n')[1].split('\n'),['**모찌** (분배자) · 비율 1 : **4억 5,125만 메소**','**도토리** · 비율 1 : **4억 5,125만 메소**']);
+  const record=distributions.list(ctx(),party.id)[0];assert.equal(record.messageId,'card-msg');
+  assert.deepEqual(record.members.map(m=>m.characterId),[chars.u2.id,chars.u1.id]);
+  // Ratio adjustment is for the distributor only.
+  const adjust=posted[0].components[0].toJSON().components[2];assert.equal(adjust.label,'분배수익 조정');
+  const notSeller=fake('button',{customId:adjust.custom_id});await handler(notSeller);assert.match(notSeller.outputs[0].content,/분배자로 지정된 사람만/);
+  const editor=fake('button',{user:{id:'u2'},customId:adjust.custom_id});await handler(editor);
+  const target=fake('select',{user:{id:'u2'},customId:editor.outputs[0].components[0].toJSON().components[0].custom_id,values:['0']});await handler(target);
+  const ratioMenu=target.outputs[0].components[1].toJSON().components[0];
+  assert.equal(ratioMenu.options.length,9);
+  const set=fake('select',{user:{id:'u2'},customId:ratioMenu.custom_id,values:['3']});await handler(set);
+  assert.match(set.outputs[0].embeds[0].toJSON().description,/^▶ \*\*모찌\*\* \(분배자\) · 비율 3 : 6억 7,687만 5,000 메소\n\*\*도토리\*\* · 비율 1 : 2억 2,562만 5,000 메소$/);
+  assert.equal(distributions.get(ctx(),record.id).ratios.join(''),'11','nothing is saved before 비율 반영');
+  const edited=[];const channel={id:'t',isThread:()=>true,messages:{fetch:async id=>({id,async edit(p){edited.push(p);}})}};
+  const apply=fake('button',{user:{id:'u2'},channel,customId:set.outputs[0].components[2].toJSON().components[1].custom_id});await handler(apply);
+  assert.match(apply.outputs[0].content,/비율을 반영/);
+  assert.deepEqual(distributions.get(ctx(),record.id).ratios,[3,1]);
+  assert.match(edited[0].embeds[0].toJSON().description,/\*\*모찌\*\* \(분배자\) · 비율 3 : \*\*6억 7,687만 5,000 메소\*\*/);
+  const log=distributions.edits(record.id);assert.deepEqual(JSON.parse(log[0].before_json).ratios,[1,1]);
+  // 비율 초기화 sets everyone back to 1 in the draft.
+  const reset=fake('button',{user:{id:'u2'},customId:set.outputs[0].components[2].toJSON().components[0].custom_id});await handler(reset);
+  assert.match(reset.outputs[0].embeds[0].toJSON().description,/비율 1 : 4억 5,125만 메소\n.*비율 1 : 4억 5,125만 메소$/);
+  // MVP uses 0.97 everywhere: 10억 × 0.97 = 9억 7,000만; × 3/4 × 0.97 = 7억 567만 5,000.
+  const mvp=fake('button',{user:{id:'u2'},channel,customId:`mp:distmvp:${record.id}`});await handler(mvp);
+  assert.match(mvp.outputs[0].embeds[0].toJSON().description,/실수령액 \*\*9억 7,000만 메소\*\* \(× 0\.97 · MVP 할인\)[\s\S]*\*\*모찌\*\* \(분배자\) · 비율 3 : \*\*7억 567만 5,000 메소\*\*/);
+  // Old question buttons explain the new flow.
+  const legacy=fake('button',{customId:`mp:distyes:${party.id}`});await handler(legacy);assert.match(legacy.outputs[0].content,/분배수익 추가/);
+  // Editing the head count resets ratios and falls back to A~F labels.
+  const editSubmit=fake('modal',{user:{id:'u2'},customId:`mp:modal:distedit:${record.id}`,fields:{getTextInputValue:k=>({item:'미트라의 분노',price:'12억',members:'3'})[k]}});await handler(editSubmit);
+  const after=distributions.get(ctx(),record.id);assert.deepEqual(after.ratios,[1,1,1]);assert.equal(after.members,null);
+  assert.match(editSubmit.outputs[0].embeds[0].toJSON().description,/\*\*A\*\* \(분배자\) · 비율 1 : [\s\S]*\*\*C\*\* · 비율 1 :/);
+});
+test('분배금 계산: calculator in the bottom row, A~F ratios 1~9, MVP toggle, nothing stored',async t=>{
+  const {handler,repository}=await handlerFor(t);
+  const roster=fake('button',{customId:'mp:roster:all:0'});await handler(roster);
+  assert.deepEqual(roster.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티','분배금 계산']);
+  const open=fake('button',{customId:'mp:calc'});await handler(open);
+  const form=open.outputs[0].toJSON();
+  assert.equal(form.custom_id,'mp:modal:calc');assert.deepEqual(form.components.map(c=>c.label),['거래금 (경매장 판매 금액)','분배 인원수']);
+  assert.deepEqual(form.components[1].component.options.map(o=>o.label),['1명','2명','3명','4명','5명','6명']);
+  const submit=fake('modal',{customId:'mp:modal:calc',fields:{getTextInputValue:()=>'25억',getStringSelectValues:()=>['3']},message:undefined});await handler(submit);
+  const lines=submit.outputs[0].embeds[0].toJSON().description.split('\n');
+  assert.equal(lines[0],'거래금 **25억 메소** → 실수령액 **23억 7,500만 메소** (× 0.95)');
+  // 23.75억 ÷ 3 × 0.95 = 7억 5,208만 3,333 for everyone, A (distributor) included.
+  assert.deepEqual(lines.slice(2),['**A** (분배자) · 비율 1 : **7억 5,208만 3,333 메소**','**B** · 비율 1 : **7억 5,208만 3,333 메소**','**C** · 비율 1 : **7억 5,208만 3,333 메소**']);
+  const [adjust,mvpButton]=submit.outputs[0].components[0].toJSON().components;
+  const editor=fake('button',{customId:adjust.custom_id});await handler(editor);
+  const pick=fake('select',{customId:editor.outputs[0].components[0].toJSON().components[0].custom_id,values:['1']});await handler(pick);
+  const set=fake('select',{customId:pick.outputs[0].components[1].toJSON().components[0].custom_id,values:['2']});await handler(set);
+  const apply=fake('button',{customId:set.outputs[0].components[2].toJSON().components[1].custom_id});await handler(apply);
+  // Ratios 1:2:1 → B gets 23.75억 × 2/4 × 0.95.
+  assert.match(apply.outputs[0].embeds[0].toJSON().description,/\*\*B\*\* · 비율 2 : \*\*11억 2,812만 5,000 메소\*\*/);
+  const mvp=fake('button',{customId:apply.outputs[0].components[0].toJSON().components[1].custom_id});await handler(mvp);
+  assert.match(mvp.outputs[0].embeds[0].toJSON().description,/× 0\.97 · MVP 할인/);
+  assert.equal(repository.db.prepare('SELECT count(*) AS n FROM distributions').get().n,0);
+  const tampered=fake('button',{customId:'mp:calcshow:25:0000:0'});await handler(tampered);assert.match(tampered.outputs[0].content,/비율을 다시 선택/);
 });
 test('crystal price command updates the table shown in party revenue',async t=>{
   const {handler,service,party}=await handlerFor(t);
@@ -274,7 +315,7 @@ test('boss history is reached like 스펙 변화: roster button → character pi
   const picker=fake('button',{customId:tools[2].custom_id});await handler(picker);
   const menu=picker.outputs[0].components[0].toJSON().components[0];
   assert.equal(menu.custom_id,'mp:selectbh');assert.deepEqual(menu.options.map(o=>o.label),['도토리','모찌']);
-  assert.deepEqual(picker.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티']);
+  assert.deepEqual(picker.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티','분배금 계산']);
   const lonely=fake('button',{user:{id:'u3'},customId:'mp:bhpicker:0'});await handler(lonely);
   assert.deepEqual(lonely.outputs[0].components[0].toJSON().components[0].options.map(o=>o.label),['감자']);
   // Opening a party member's history from the picker notifies them, like the slash command.
@@ -282,7 +323,7 @@ test('boss history is reached like 스펙 변화: roster button → character pi
   assert.equal(open.outputs[0].embeds[0].toJSON().title,'모찌 · 보스 히스토리');
   assert.match(open.followUps[0].content,/^<@u2> <@u1>님이 \*\*모찌\*\*의 보스 히스토리/);
   const rows=open.outputs[0].components.map(r=>r.toJSON().components.map(c=>c.label??c.custom_id));
-  assert.deepEqual(rows.slice(1),[['이번 주 저장','지난주 저장'],['다른 캐릭터'],['보스방','캐릭터','파티']]);
+  assert.deepEqual(rows.slice(1),[['이번 주 저장','지난주 저장'],['다른 캐릭터'],['보스방','캐릭터','파티','분배금 계산']]);
   const back=fake('button',{customId:open.outputs[0].components[2].toJSON().components[0].custom_id});await handler(back);
   assert.equal(back.outputs[0].components[0].toJSON().components[0].custom_id,'mp:selectbh');
   // Picking a character outside the viewer's parties is refused.
@@ -292,12 +333,12 @@ test('boss history is reached like 스펙 변화: roster button → character pi
 test('preview and editor screens also carry the home navigation row',async t=>{
   const {handler,records,chars}=await handlerFor(t);
   const pick=fake('select',{customId:`mp:bhpick:${chars.u1.id}`,values:['2026-11-05']});await handler(pick);
-  assert.deepEqual(pick.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티']);
+  assert.deepEqual(pick.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티','분배금 계산']);
   const save=fake('button',{customId:pick.outputs[0].components[0].toJSON().components[0].custom_id});await handler(save);
-  assert.deepEqual(save.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티']);
+  assert.deepEqual(save.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티','분배금 계산']);
   const boss=fake('select',{customId:save.outputs[0].components[0].toJSON().components[0].custom_id,values:['0']});await handler(boss);
   assert.deepEqual(boss.outputs[0].components[1].toJSON().components.map(b=>b.label),['주차 편집으로 돌아가기','히스토리로 돌아가기']);
-  assert.deepEqual(boss.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티']);
+  assert.deepEqual(boss.outputs[0].components.at(-1).toJSON().components.map(b=>b.label),['보스방','캐릭터','파티','분배금 계산']);
 });
 
 test('history save buttons save this week or last week directly and disappear once saved',async t=>{

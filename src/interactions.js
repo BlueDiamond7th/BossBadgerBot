@@ -1,7 +1,7 @@
 import { MessageFlags, PermissionFlagsBits } from 'discord.js';
 import { contextFor, supportedChannel, eligibleOwners, requireEditable, visibleError } from './access.js';
 import { requireRule } from './errors.js';
-import { formatMeso } from './revenue.js';
+import { formatMeso, parseMeso, parseRatios, equalRatios, MAX_MESO, MAX_SPLIT } from './revenue.js';
 import { bossById } from './catalog.js';
 import * as view from './views.js';
 import { createScheduleInteractions } from './schedule-interactions.js';
@@ -19,6 +19,25 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
     return {guildId:i.guildId,threadId:i.channel.id,userId:i.user.id,isManager:i.memberPermissions?.has(i.channel.isThread()?PermissionFlagsBits.ManageThreads:PermissionFlagsBits.ManageChannels)??false};
   }
   // Viewing another member's boss records notifies that member.
+  // Calculator state from button IDs: price, ratio digits, MVP flag.
+  function calcFrom(price,ratios,mvp) {
+    const value=Number(price);requireRule(Number.isSafeInteger(value)&&value>0&&value<=MAX_MESO,'계산을 다시 시작해 주세요.');
+    return {price:value,ratios:parseRatios(ratios),mvp:mvp==='1'};
+  }
+  // Ratio editing on a stored record is for its distributor only; the draft must match the head count.
+  function sellerRecord(ctx,id,draft=null) {
+    const record=need(distributions,'분배').get(ctx,id);
+    requireRule(record.sellerId===ctx.userId,'분배자로 지정된 사람만 분배수익을 조정할 수 있어요.','FORBIDDEN');
+    const ratios=draft===null?record.ratios:parseRatios(draft);
+    requireRule(ratios.length===record.memberCount,'분배 인원이 바뀌었어요. 분배수익 조정을 다시 열어 주세요.','STALE');
+    return {record,ratios};
+  }
+  // Keeps the public card posted in the channel in step with the stored record.
+  async function refreshCard(i,record) {
+    if(!record.messageId||!i.channel?.messages?.fetch) return;
+    try {const message=await i.channel.messages.fetch(record.messageId);await message.edit({...view.distCard(record),allowedMentions:{parse:[]}});}
+    catch {console.warn('[dist-card] refresh-failed');}
+  }
   const bossNotice=(record,what)=>({owner:record.ownerId,name:record.characterName,what});
   // History shows one week at a time; by default the most recently saved week.
   function historyView(ctx,id,{selected,notice=null,page=0}={}) {
@@ -140,7 +159,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
   return async function handle(i) {
     if(i.isAutocomplete()) return autocomplete(i);
     if(!i.isChatInputCommand()&&!i.isButton()&&!i.isStringSelectMenu()&&!i.isModalSubmit()&&!i.isUserSelectMenu?.()) return;
-    let changed=false,notice=null,publicPost=null;
+    let changed=false,notice=null,publicPost=null,publicRecordId=null;
     try {
       if(i.customId?.startsWith('sc:')&&scheduleUI&&await scheduleUI.modal(i,quickContext(i))) return;
       // Opening a blank modal reveals no saved data. Recheck live membership on submit.
@@ -148,6 +167,10 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         requireRule(i.inGuild()&&i.guildId===guildId&&supportedChannel(i.channel),'설정한 서버의 일반 채널 또는 스레드에서 사용해 주세요.');
         return await i.showModal(i.customId==='mp:apikey'?view.registrationModal():view.creationModal());
       }
+      // The calculator and the party "분배수익 추가" form open straight away (a modal must be the first reply).
+      if(i.isButton()&&i.customId==='mp:calc') {quickContext(i);return await i.showModal(view.calcModal());}
+      const distParty=i.isButton()&&i.customId.startsWith('mp:dist:')?i.customId.split(':')[2]:i.isChatInputCommand()&&i.commandName==='분배'&&i.options.getSubcommand()==='시작'?i.options.getString('파티'):null;
+      if(distParty) {need(distributions,'분배').partyMembers(quickContext(i),distParty);return await i.showModal(view.distAddModal(distParty));}
       if(i.isUserSelectMenu?.()&&i.customId.startsWith('mp:distseller:')) {
         const pid=i.customId.split(':')[2],seller=i.values[0];
         need(distributions,'분배').requireSeller(quickContext(i),pid,seller);
@@ -208,7 +231,6 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
           if(sub==='가격표') payload=view.priceTable(book.all(ctx.guildId));
           if(sub==='가격수정') {const r=book.set(ctx,get('보스'),get('난이도'),get('가격'));payload={...view.priceTable(book.all(ctx.guildId)),content:`${r.difficulty} ${r.boss.name} 결정석 가격을 ${formatMeso(r.before)} → ${formatMeso(r.price)}(으)로 수정했어요.`};}
         } else if(i.commandName==='분배') {
-          if(sub==='시작') payload=view.distQuestion(service.getParty(ctx,pid));
           if(sub==='목록') payload=view.distList(service.getParty(ctx,pid,true),need(distributions,'분배').list(ctx,pid),0);
         }
       } else if(i.isModalSubmit()) {
@@ -216,6 +238,18 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         if(i.customId==='mp:modal:apikey') {connection(ctx);payload=await imported(ctx,await connections.connect(ctx,i.fields.getTextInputValue('apikey')));changed=true;onConnectionChanged();}
         if(i.customId==='mp:modal:create') {const p=service.createParty(ctx,i.fields.getTextInputValue('name'),rid);changed=true;payload=await detail(ctx,i,p.id);}
         const [,,kind,id,seller]=i.customId.split(':');
+        if(i.customId==='mp:modal:calc') {
+          const n=Number(i.fields.getStringSelectValues('members')?.[0]);
+          requireRule(Number.isInteger(n)&&n>=1&&n<=MAX_SPLIT,`분배 인원수는 1~${MAX_SPLIT}명 중에서 골라 주세요.`);
+          payload=view.calcCard({price:parseMeso(i.fields.getTextInputValue('price')),ratios:equalRatios(n),mvp:false});
+        }
+        if(kind==='distadd') {
+          const book=need(distributions,'분배'),sellerId=i.fields.getSelectedUsers('seller')?.first()?.id;
+          requireRule(sellerId,'분배자를 선택해 주세요.');book.requireSeller(ctx,id,sellerId);
+          await getEligible(ctx,i,[sellerId]);requireRule(ctx.eligibleOwnerIds.has(sellerId),'분배자가 현재 채널/스레드 참가자가 아니에요.','NOT_MEMBER');
+          const record=book.create(ctx,{partyId:id,sellerId,item:i.fields.getTextInputValue('item'),price:i.fields.getTextInputValue('price')},rid);
+          publicPost=view.distCard(record);publicRecordId=record.id;changed=true;payload={content:'분배수익을 기록하고 결과를 채널에 게시했어요. 파티 화면의 추가 분배수익에도 표시돼요.'};
+        }
         if(kind==='dist') {
           const book=need(distributions,'분배');book.requireSeller(ctx,id,seller);
           await getEligible(ctx,i,[seller]);requireRule(ctx.eligibleOwnerIds.has(seller),'판매자가 현재 채널/스레드 참가자가 아니에요.','NOT_MEMBER');
@@ -309,14 +343,36 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
           const index=Number(i.customId.split(':')[5]),w=need(records,'보스 기록').setPartySize(ctx,id,a,Number(b),index,Number(selected)),entry=w.week.cleared[index];
           payload=view.bossWeekEditor(w,priceMap(ctx.guildId),`**${view.safe(entry.difficulty)} ${view.safe(entry.name)}**을(를) ${entry.partySize}인으로 바꿨어요.`);
         }
-        if(action==='dist') payload=view.distQuestion(service.getParty(ctx,id));
-        if(action==='distno') payload={content:'분배할 아이템이 없어 분배 계산을 진행하지 않았어요.',components:[view.backToParty(id),view.home()]};
-        if(action==='distyes') payload=view.distSellerPicker(service.getParty(ctx,id));
+        // Buttons from the old "분배할 아이템이 있나요?" flow.
+        if(action==='distno'||action==='distyes') payload={content:'분배 방식이 바뀌었어요. 파티 화면의 분배수익 추가를 눌러 주세요.',components:[view.backToParty(id),view.home()]};
+        if(['calcadj','calcpick','calcratio','calcshow','calcmvp'].includes(action)) {
+          const state=calcFrom(id,a,b),index=action==='calcpick'?Number(selected):Number(i.customId.split(':')[5]);
+          if(action==='calcadj') payload=view.calcRatioEditor(state);
+          if(action==='calcpick'||action==='calcratio') {
+            requireRule(Number.isInteger(index)&&index>=0&&index<state.ratios.length,'비율을 바꿀 사람을 다시 골라 주세요.');
+            if(action==='calcratio') state.ratios[index]=parseRatios(selected)[0];
+            payload=view.calcRatioEditor(state,index);
+          }
+          if(action==='calcshow') payload=view.calcCard(state,'분배 비율을 반영했어요.');
+          if(action==='calcmvp') payload=view.calcCard({...state,mvp:!state.mvp});
+        }
+        if(action==='dradj') {const {record,ratios}=sellerRecord(ctx,id,a);payload=view.distRatioEditor(record,ratios);}
+        if(action==='drpick'||action==='drratio') {
+          const {record,ratios}=sellerRecord(ctx,id,a),index=action==='drpick'?Number(selected):Number(b);
+          requireRule(Number.isInteger(index)&&index>=0&&index<ratios.length,'비율을 바꿀 캐릭터를 다시 골라 주세요.');
+          if(action==='drratio') ratios[index]=parseRatios(selected)[0];
+          payload=view.distRatioEditor(record,ratios,index);
+        }
+        if(action==='drapply') {
+          const {ratios}=sellerRecord(ctx,id,a),record=need(distributions,'분배').update(ctx,id,{ratios});
+          await refreshCard(i,record);changed=true;
+          payload={...view.distCard(record),content:'분배 비율을 반영하고 수정 로그를 저장했어요.'};
+        }
         if(action==='distlist') payload=view.distList(service.getParty(ctx,id,true),need(distributions,'분배').list(ctx,id),Number(a));
         if(action==='distopen') payload=view.distCard(need(distributions,'분배').get(ctx,selected));
         if(action==='distmvp') {
           const book=need(distributions,'분배'),record=book.update(ctx,id,{mvp:!book.get(ctx,id).mvp});
-          payload=view.distCard(record);await editPublic(i,payload);
+          payload=view.distCard(record);await editPublic(i,payload);await refreshCard(i,record);changed=true;
         }
         if(action==='archive') {const p=requireEditable(ctx,service.getParty(ctx,id,true),Number(a));payload=view.archiveConfirmation(p);}
         if(action==='confirmarchive') {
@@ -333,7 +389,10 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         await i.followUp({...payload,allowedMentions:{parse:[]}});
         await i.deleteReply();
       } else await respond(i,payload,privateSource);
-      if(publicPost) await i.followUp({...publicPost,allowedMentions:{parse:[]}});
+      if(publicPost) {
+        const sent=await i.followUp({...publicPost,allowedMentions:{parse:[]}});
+        if(publicRecordId&&sent?.id) distributions.setMessage(ctx,publicRecordId,sent.id);
+      }
       if(notice&&notice.owner!==ctx.userId) await i.followUp({content:`<@${notice.owner}> <@${ctx.userId}>님이 **${view.safe(notice.name)}**의 ${notice.what}을 조회했어요.`,allowedMentions:{users:[notice.owner]}}).catch(()=>console.warn('[notice] send-failed'));
       if(changed) {
         if(scheduleWorker)await scheduleWorker.refresh(ctx);

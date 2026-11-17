@@ -35,11 +35,27 @@ export function formatMeso(value) {
   return `${parts.join(' ')} 메소`;
 }
 
-// Distribution formulas from the feature specification.
+// Distribution: net = price × fee, each person (distributor included) = net × ratio ÷ Σratio × fee.
+// fee is 0.95, or 0.97 with the MVP auction-fee discount. Ratios are 1~9, everyone starts at 1.
+export const MAX_SPLIT=6;
+export const equalRatios=n=>Array(Math.max(1,n)).fill(1);
+export function validRatios(ratios,n=ratios?.length) {
+  return Array.isArray(ratios)&&ratios.length===n&&n>=1&&n<=MAX_SPLIT&&ratios.every(r=>Number.isInteger(r)&&r>=1&&r<=9);
+}
+// "2111" ⇄ [2,1,1,1] for button IDs.
+export function parseRatios(text) {
+  requireRule(/^[1-9]{1,6}$/.test(String(text??'')),'분배 비율을 다시 선택해 주세요.');
+  return [...String(text)].map(Number);
+}
+export function splitShares(price,ratios,mvp=false) {
+  requireRule(validRatios(ratios),'분배 비율은 1~9, 인원은 1~6명이어야 해요.');
+  const fee=mvp?0.97:0.95,net=Math.floor(price*fee),total=ratios.reduce((a,b)=>a+b,0);
+  return {price,fee,net,total,ratios,shares:ratios.map(r=>Math.floor(net*r/total*fee))};
+}
+// Equal-split summary kept for callers that show "1인" amounts.
 export function distribution(price,memberCount) {
-  const n=Math.max(1,memberCount);
-  const net=Math.floor(price*0.95),mvpNet=Math.floor(price*0.97);
-  return {price,memberCount:n,net,mvpNet,share:Math.floor(net/n*0.95),mvpShare:Math.floor(mvpNet/n*0.97)};
+  const n=Math.max(1,memberCount),r=equalRatios(n),normal=splitShares(price,r),mvp=splitShares(price,r,true);
+  return {price,memberCount:n,net:normal.net,mvpNet:mvp.net,share:normal.shares[0],mvpShare:mvp.shares[0]};
 }
 
 export class PriceBook {
@@ -103,6 +119,8 @@ export class DistributionBook {
       CREATE TABLE IF NOT EXISTS distribution_edits (
       id INTEGER PRIMARY KEY AUTOINCREMENT, distribution_id TEXT NOT NULL, editor_id TEXT NOT NULL,
       edited_at INTEGER NOT NULL, before_json TEXT NOT NULL, after_json TEXT NOT NULL);`);
+    const columns=new Set(this.db.prepare('PRAGMA table_info(distributions)').all().map(c=>c.name));
+    for(const [name,type] of [['ratios_json','TEXT'],['members_json','TEXT'],['message_id','TEXT']]) if(!columns.has(name)) this.db.exec(`ALTER TABLE distributions ADD COLUMN ${name} ${type}`);
   }
   // Seller must own an active character in the party; Discord membership is checked by the caller.
   partyMembers(ctx,partyId) {
@@ -120,16 +138,21 @@ export class DistributionBook {
     const {party,owners}=this.requireSeller(ctx,partyId,sellerId);
     const record={id:rid,item:text(item,'거래 품목',60),price:typeof price==='number'?price:parseMeso(price)};
     requireRule(Number.isSafeInteger(record.price)&&record.price>0&&record.price<=MAX_MESO,'금액은 1메소 이상 1조 메소 이하로 입력해 주세요.');
-    const now=this.now();
+    const now=this.now(),state=this.service.snapshot(ctx);
+    // Snapshot the party's characters, distributor first, so ratios can be set per character later.
+    const members=party.characterIds.map(id=>state.characters.find(c=>c.id===id)).filter(Boolean).map(c=>({characterId:c.id,name:c.name,ownerId:c.ownerId}));
+    members.sort((a,b)=>(b.ownerId===sellerId)-(a.ownerId===sellerId));
+    const n=Math.max(1,Math.min(MAX_SPLIT,members.length||party.characterIds.length));
     // The request id doubles as the record id, so Discord retries do not create duplicates.
-    this.db.prepare('INSERT OR IGNORE INTO distributions VALUES(?,?,?,?,?,?,?,0,?,?,?,?,?)').run(rid,ctx.guildId,ctx.threadId,party.id,sellerId,record.item,record.price,party.characterIds.length,JSON.stringify([...owners]),ctx.userId,now,now);
+    this.db.prepare(`INSERT OR IGNORE INTO distributions(id,guild_id,thread_id,party_id,seller_id,item,price,mvp,member_count,member_ids,created_by,created_at,updated_at,ratios_json,members_json)
+      VALUES(?,?,?,?,?,?,?,0,?,?,?,?,?,?,?)`).run(rid,ctx.guildId,ctx.threadId,party.id,sellerId,record.item,record.price,n,JSON.stringify([...owners]),ctx.userId,now,now,JSON.stringify(equalRatios(n)),JSON.stringify(members.slice(0,n)));
     return this.get(ctx,rid);
   }
   get(ctx,id) {
     const row=this.db.prepare('SELECT * FROM distributions WHERE id=? AND guild_id=? AND thread_id=?').get(id,ctx.guildId,ctx.threadId);
     requireRule(row,'분배 기록을 찾을 수 없어요.','NOT_FOUND');
     const party=this.service.snapshot(ctx).parties.find(p=>p.id===row.party_id);
-    return {id:row.id,partyId:row.party_id,partyName:party?.name??'삭제된 파티',sellerId:row.seller_id,item:row.item,price:row.price,mvp:Boolean(row.mvp),memberCount:row.member_count,memberIds:JSON.parse(row.member_ids),createdBy:row.created_by,createdAt:row.created_at,updatedAt:row.updated_at,edits:this.db.prepare('SELECT COUNT(*) AS n FROM distribution_edits WHERE distribution_id=?').get(row.id).n};
+    return {id:row.id,partyId:row.party_id,partyName:party?.name??'삭제된 파티',sellerId:row.seller_id,item:row.item,price:row.price,mvp:Boolean(row.mvp),memberCount:row.member_count,memberIds:JSON.parse(row.member_ids),ratios:validRatios(JSON.parse(row.ratios_json??'null'),row.member_count)?JSON.parse(row.ratios_json):equalRatios(row.member_count),members:(m=>Array.isArray(m)&&m.length===row.member_count?m:null)(JSON.parse(row.members_json??'null')),messageId:row.message_id??null,createdBy:row.created_by,createdAt:row.created_at,updatedAt:row.updated_at,edits:this.db.prepare('SELECT COUNT(*) AS n FROM distribution_edits WHERE distribution_id=?').get(row.id).n};
   }
   list(ctx,partyId) {
     return this.db.prepare('SELECT id FROM distributions WHERE guild_id=? AND thread_id=? AND party_id=? ORDER BY created_at DESC,rowid DESC LIMIT 100').all(ctx.guildId,ctx.threadId,partyId).map(r=>this.get(ctx,r.id));
@@ -139,15 +162,22 @@ export class DistributionBook {
   update(ctx,id,changes) {
     const before=this.get(ctx,id);
     requireRule(before.sellerId===ctx.userId,'판매자로 지정된 사람만 수정할 수 있어요.','FORBIDDEN');
-    const after={item:changes.item!=null?text(changes.item,'거래 품목',60):before.item,price:changes.price!=null?(typeof changes.price==='number'?changes.price:parseMeso(changes.price)):before.price,memberCount:changes.memberCount!=null?parseMembers(changes.memberCount):before.memberCount,mvp:changes.mvp!=null?Boolean(changes.mvp):before.mvp};
+    const memberCount=changes.memberCount!=null?parseMembers(changes.memberCount):before.memberCount;
+    // A new head count resets everyone to ratio 1 unless new ratios are given.
+    const ratios=changes.ratios??(memberCount===before.memberCount?before.ratios:equalRatios(memberCount));
+    requireRule(validRatios(ratios,memberCount),'분배 비율은 사람마다 1~9로 정해 주세요.');
+    const after={item:changes.item!=null?text(changes.item,'거래 품목',60):before.item,price:changes.price!=null?(typeof changes.price==='number'?changes.price:parseMeso(changes.price)):before.price,memberCount,mvp:changes.mvp!=null?Boolean(changes.mvp):before.mvp,ratios};
     requireRule(Number.isSafeInteger(after.price)&&after.price>0&&after.price<=MAX_MESO,'금액은 1메소 이상 1조 메소 이하로 입력해 주세요.');
-    if(after.item===before.item&&after.price===before.price&&after.memberCount===before.memberCount&&after.mvp===before.mvp) return before;
+    const pick=r=>({item:r.item,price:r.price,memberCount:r.memberCount,mvp:r.mvp,ratios:r.ratios});
+    if(JSON.stringify(pick(after))===JSON.stringify(pick(before))) return before;
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.db.prepare('UPDATE distributions SET item=?,price=?,member_count=?,mvp=?,updated_at=? WHERE id=?').run(after.item,after.price,after.memberCount,after.mvp?1:0,this.now(),id);
-      this.db.prepare('INSERT INTO distribution_edits(distribution_id,editor_id,edited_at,before_json,after_json) VALUES(?,?,?,?,?)').run(id,ctx.userId,this.now(),JSON.stringify({item:before.item,price:before.price,memberCount:before.memberCount,mvp:before.mvp}),JSON.stringify(after));
+      this.db.prepare('UPDATE distributions SET item=?,price=?,member_count=?,mvp=?,ratios_json=?,updated_at=? WHERE id=?').run(after.item,after.price,after.memberCount,after.mvp?1:0,JSON.stringify(after.ratios),this.now(),id);
+      this.db.prepare('INSERT INTO distribution_edits(distribution_id,editor_id,edited_at,before_json,after_json) VALUES(?,?,?,?,?)').run(id,ctx.userId,this.now(),JSON.stringify(pick(before)),JSON.stringify(after));
       this.db.exec('COMMIT');
     } catch(error) {this.db.exec('ROLLBACK');throw error;}
     return this.get(ctx,id);
   }
+  setMessage(ctx,id,messageId) {this.db.prepare('UPDATE distributions SET message_id=? WHERE id=? AND guild_id=? AND thread_id=?').run(messageId,id,ctx.guildId,ctx.threadId);}
+
 }

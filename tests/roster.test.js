@@ -76,7 +76,7 @@ test('roster buttons: paging keeps filters, filter buttons and @ select restart 
     message:{flags:{has:()=>true}},async deferReply(){},async deferUpdate(){},async deleteReply(){},async editReply(p){out.push(p);},async followUp(p){out.push(p);}};
   await handler({...base,isChatInputCommand:()=>true,commandName:'캐릭터',options:{getSubcommand:()=>'목록',getUser:()=>null,getString:()=>null}});
   const rows=out.at(-1).components.map(r=>r.toJSON().components);
-  assert.deepEqual(rows.map(r=>r.map(c=>c.label??c.placeholder)),[['이전','다음'],['등록자로 보기 (@검색)'],['전체 등록자','전체 레벨','Lv.285+','Lv.290+'],['캐릭터 추가 / 삭제','스펙 변화','보스 히스토리','내 스케줄러'],['보스방','캐릭터','파티']]);
+  assert.deepEqual(rows.map(r=>r.map(c=>c.label??c.placeholder)),[['이전','다음'],['등록자로 보기 (@검색)'],['전체 등록자','전체 레벨','Lv.285+','Lv.290+'],['캐릭터 추가 / 삭제','스펙 변화','보스 히스토리','내 스케줄러'],['보스방','캐릭터','파티','분배금 계산']]);
   const ids=rows.flat().map(c=>c.custom_id);assert.equal(new Set(ids).size,ids.length);
   await handler({...base,id:'b1',isButton:()=>true,customId:rows[2][3].custom_id});
   assert.match(out.at(-1).embeds[0].toJSON().footer.text,/Lv\.290 이상/);

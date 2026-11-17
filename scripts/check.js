@@ -1,12 +1,12 @@
 import { commandJSON } from '../src/commands.js';
-import { board, creationModal, registrationModal, distModal, priceTable } from '../src/views.js';
+import { board, creationModal, registrationModal, distModal, priceTable, calcModal, distAddModal } from '../src/views.js';
 import { DEFAULT_CRYSTAL_PRICES } from '../src/catalog.js';
 import { loadConfig } from '../src/config.js';
 import { scheduleInputModal, scheduleEditModal, scheduleReasonModal, scheduleList } from '../src/schedule-views.js';
 const data=commandJSON();
 if(data.length!==7) throw new Error('명령어 정의를 확인해 주세요.');
 board({characters:[],parties:[]}).embeds.forEach(e=>e.toJSON());
-creationModal().toJSON();registrationModal().toJSON();distModal('mp:modal:dist:x:1').toJSON();
+creationModal().toJSON();registrationModal().toJSON();distModal('mp:modal:dist:x:1').toJSON();calcModal().toJSON();distAddModal('x').toJSON();
 priceTable({prices:DEFAULT_CRYSTAL_PRICES,overrides:new Set()}).embeds.forEach(e=>e.toJSON());
 scheduleInputModal('p','fixed').toJSON();scheduleInputModal('p','poll').toJSON();
 scheduleEditModal({id:'s',startAt:Date.now()+3600_000,duration:60,version:1}).toJSON();
