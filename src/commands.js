@@ -30,8 +30,10 @@ export const commands=[
       .addStringOption(o=>o.setName('종류').setDescription('환산 종류').setRequired(true).addChoices({name:'환산 주스탯',value:'주스탯'},{name:'헥사 환산',value:'헥사'})))
     .addSubcommand(s=>charOption(s.setName('해제').setDescription('내 캐릭터 등록을 해제해요. 편성 중이면 먼저 제외해 주세요.'))),
   root('파티','등록된 캐릭터로 파티를 만들고 보스를 정해요')
-    .addSubcommand(s=>s.setName('생성').setDescription('현재 스레드에 새 파티를 만들어요')
-      .addStringOption(o=>o.setName('이름').setDescription('파티 이름').setMaxLength(60).setRequired(true)))
+    .addSubcommand(s=>s.setName('생성').setDescription('현재 스레드에 새 파티를 만들어요. 캐릭터·보스도 한 번에 넣을 수 있어요.')
+      .addStringOption(o=>o.setName('이름').setDescription('파티 이름').setMaxLength(60).setRequired(true))
+      .addStringOption(o=>o.setName('캐릭터').setDescription('쉼표로 구분, 최대 6명. 입력하면 이름을 찾아 줘요. 예: 도토리,모찌빵').setMaxLength(200).setAutocomplete(true))
+      .addStringOption(o=>o.setName('보스').setDescription('쉼표로 구분, 최대 12개. 예: 노멀 찬란한 흉성, 하드 대적자').setMaxLength(400)))
     .addSubcommand(s=>s.setName('목록').setDescription('현재 스레드의 파티 목록을 열어요')
       .addBooleanOption(o=>o.setName('보관함').setDescription('보관한 파티 보기')))
     .addSubcommand(s=>partyOption(s.setName('정보').setDescription('파티 구성과 보스를 확인하고 편집해요')))

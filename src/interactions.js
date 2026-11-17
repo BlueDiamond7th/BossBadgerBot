@@ -1,6 +1,7 @@
 import { MessageFlags, PermissionFlagsBits } from 'discord.js';
 import { contextFor, supportedChannel, eligibleOwners, requireEditable, visibleError } from './access.js';
 import { requireRule } from './errors.js';
+import { parseBossList, parseCharacterList, pickRepresentatives, bossesFromValues, createPartyWith, memberMentions } from './party-create.js';
 import { formatMeso, parseMeso, parseRatios, equalRatios, MAX_MESO, MAX_SPLIT } from './revenue.js';
 import { bossById } from './catalog.js';
 import * as view from './views.js';
@@ -19,6 +20,14 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
     return {guildId:i.guildId,threadId:i.channel.id,userId:i.user.id,isManager:i.memberPermissions?.has(i.channel.isThread()?PermissionFlagsBits.ManageThreads:PermissionFlagsBits.ManageChannels)??false};
   }
   // Viewing another member's boss records notifies that member.
+  // Shared by the creation form and /파티 생성: create, add what passes, list what was skipped.
+  async function createAndShow(ctx,i,input,rid,errors=[]) {
+    if(!ctx.eligibleOwnerIds) {const s=service.snapshot(ctx);await getEligible(ctx,i,input.characterIds.map(id=>s.characters.find(c=>c.id===id)?.ownerId).filter(Boolean));}
+    const {party,added,skipped}=createPartyWith(service,ctx,input,rid),problems=[...errors,...skipped];
+    const payload=await detail(ctx,i,party.id);
+    payload.content=`**${view.safe(party.name)}** 파티를 만들었어요. 캐릭터 ${added.length}명 · 보스 ${party.bosses.length}개${problems.length?`\n건너뛴 항목:\n${problems.slice(0,8).map(p=>`• ${p}`).join('\n')}${problems.length>8?`\n• 외 ${problems.length-8}개`:''}`:''}`.slice(0,1900);
+    return {payload,mentions:memberMentions(added,party.name,ctx.userId)};
+  }
   // Calculator state from button IDs: price, ratio digits, MVP flag.
   function calcFrom(price,ratios,mvp) {
     const value=Number(price);requireRule(Number.isSafeInteger(value)&&value>0&&value<=MAX_MESO,'계산을 다시 시작해 주세요.');
@@ -143,6 +152,13 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
       const s=service.snapshot(ctx),focused=i.options.getFocused(true),query=String(focused.value).toLocaleLowerCase();
       const sub=i.options.getSubcommand();let items=[];
       if(focused.name==='파티') items=s.parties.filter(p=>sub==='복원'?p.archived:sub==='복사'?true:!p.archived).map(p=>({name:p.name,value:p.id}));
+      if(focused.name==='캐릭터'&&i.commandName==='파티'&&sub==='생성') {
+        const typed=String(focused.value).split(/[,，]/),head=typed.slice(0,-1).map(t=>t.trim()).filter(Boolean),last=typed.at(-1).trim().toLocaleLowerCase();
+        const taken=new Set(head.map(t=>t.toLocaleLowerCase()));
+        const names=s.characters.filter(c=>c.active&&!taken.has(c.name.toLocaleLowerCase())&&c.name.toLocaleLowerCase().includes(last)).slice(0,25);
+        await i.respond(names.map(c=>{const value=[...head,c.name].join(',');return {name:`${value} (${c.world??'월드 미확인'} · ${c.job??'직업 미확인'})`.slice(0,100),value:value.slice(0,100)};}).filter(o=>o.value.length<=100));
+        return;
+      }
       if(focused.name==='캐릭터') {
         let chars=s.characters.filter(c=>c.active);
         if(i.commandName==='캐릭터'&&sub!=='스펙') chars=chars.filter(c=>c.ownerId===ctx.userId);
@@ -159,7 +175,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
   return async function handle(i) {
     if(i.isAutocomplete()) return autocomplete(i);
     if(!i.isChatInputCommand()&&!i.isButton()&&!i.isStringSelectMenu()&&!i.isModalSubmit()&&!i.isUserSelectMenu?.()) return;
-    let changed=false,notice=null,publicPost=null,publicRecordId=null;
+    let changed=false,notice=null,publicPost=null,publicRecordId=null,mentions=null;
     try {
       if(i.customId?.startsWith('sc:')&&scheduleUI&&await scheduleUI.modal(i,quickContext(i))) return;
       // Opening a blank modal reveals no saved data. Recheck live membership on submit.
@@ -212,10 +228,13 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
           if(sub==='해제') {service.unregister(ctx,get('캐릭터'),rid);changed=true;payload={content:'내 캐릭터의 보스방 등록을 해제했어요. 과거 보관 데이터는 유지돼요.'};}
         } else if(i.commandName==='파티') {
           let p;
-          if(sub==='생성') {p=service.createParty(ctx,get('이름'),rid);changed=true;}
+          if(sub==='생성') {
+            const s=service.snapshot(ctx),chars=parseCharacterList(s,get('캐릭터')),bosses=parseBossList(get('보스'));
+            ({payload,mentions}=await createAndShow(ctx,i,{name:get('이름'),characterIds:chars.ids,bosses:bosses.bosses},rid,[...chars.errors,...bosses.errors]));changed=true;
+          }
           if(sub==='목록') payload=view.partyList(service.snapshot(ctx),0,i.options.getBoolean('보관함')??false);
           if(sub==='정보') payload=await detail(ctx,i,pid);
-          if(sub==='캐릭터추가') {await candidate(ctx,i,get('캐릭터'));p=service.addCharacter(ctx,pid,get('캐릭터'),rid);changed=true;}
+          if(sub==='캐릭터추가') {await candidate(ctx,i,get('캐릭터'));p=service.addCharacter(ctx,pid,get('캐릭터'),rid);changed=true;mentions=memberMentions([service.snapshot(ctx).characters.find(c=>c.id===get('캐릭터'))],p.name,ctx.userId);}
           if(sub==='캐릭터제외') {p=service.removeCharacter(ctx,pid,get('캐릭터'),rid);changed=true;}
           if(sub==='보스추가') {p=service.addBoss(ctx,pid,get('보스'),get('난이도'),rid);changed=true;}
           if(sub==='보스제외') {p=service.removeBoss(ctx,pid,get('보스'),rid);changed=true;}
@@ -236,7 +255,13 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
       } else if(i.isModalSubmit()) {
         if(i.customId==='mp:modal:register') payload=connection(ctx);
         if(i.customId==='mp:modal:apikey') {connection(ctx);payload=await imported(ctx,await connections.connect(ctx,i.fields.getTextInputValue('apikey')));changed=true;onConnectionChanged();}
-        if(i.customId==='mp:modal:create') {const p=service.createParty(ctx,i.fields.getTextInputValue('name'),rid);changed=true;payload=await detail(ctx,i,p.id);}
+        if(i.customId==='mp:modal:create') {
+          const users=[...(i.fields.getSelectedUsers('members')?.keys?.()??[])],values=[...(i.fields.getStringSelectValues('bossA')??[]),...(i.fields.getStringSelectValues('bossB')??[])];
+          await getEligible(ctx,i,users);
+          const s=service.snapshot(ctx),present=users.filter(u=>ctx.eligibleOwnerIds.has(u)),picks=pickRepresentatives(s,present,tracker?.latestStats(ctx,s.characters.filter(c=>c.active&&present.includes(c.ownerId)).map(c=>c.id))??null);
+          const absent=users.filter(u=>!ctx.eligibleOwnerIds.has(u)).map(u=>`<@${u}>: 현재 채널/스레드 참가자가 아니에요.`);
+          ({payload,mentions}=await createAndShow(ctx,i,{name:i.fields.getTextInputValue('name'),characterIds:picks.ids,bosses:bossesFromValues(values)},rid,[...absent,...picks.errors]));changed=true;
+        }
         const [,,kind,id,seller]=i.customId.split(':');
         if(i.customId==='mp:modal:calc') {
           const n=Number(i.fields.getStringSelectValues('members')?.[0]);
@@ -293,7 +318,7 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
           if(action==='addmember') await getEligible(ctx,i,s.characters.filter(c=>c.active).map(c=>c.ownerId));
           payload=view.memberPicker(s,p,Number(a),action==='delmember',ctx.eligibleOwnerIds??null);
         }
-        if(action==='selectmember') {await candidate(ctx,i,selected);service.addCharacter(ctx,id,selected,rid,Number(a));changed=true;payload=await detail(ctx,i,id);}
+        if(action==='selectmember') {await candidate(ctx,i,selected);const p=service.addCharacter(ctx,id,selected,rid,Number(a));changed=true;payload=await detail(ctx,i,id);mentions=memberMentions([service.snapshot(ctx).characters.find(c=>c.id===selected)],p.name,ctx.userId);}
         if(action==='removemember') {service.removeCharacter(ctx,id,selected,rid,Number(a));changed=true;payload=await detail(ctx,i,id);}
         if(action==='addboss'||action==='delboss') {const p=requireEditable(ctx,service.getParty(ctx,id),Number(b));payload=view.bossPicker(p,action==='delboss');}
         if(action==='selectboss') {const p=requireEditable(ctx,service.getParty(ctx,id),Number(a));requireRule(bossById(selected),'보스를 다시 선택해 주세요.');payload=view.difficultyPicker(p,selected);}
@@ -389,6 +414,8 @@ export function createHandler({service,guildId,tracker=null,connections=null,rec
         await i.followUp({...payload,allowedMentions:{parse:[]}});
         await i.deleteReply();
       } else await respond(i,payload,privateSource);
+      // Tell people whose characters were just put in a party.
+      if(mentions) await i.followUp({content:mentions.content,allowedMentions:{users:mentions.users,parse:[]}}).catch(()=>console.warn('[member-notice] send-failed'));
       if(publicPost) {
         const sent=await i.followUp({...publicPost,allowedMentions:{parse:[]}});
         if(publicRecordId&&sent?.id) distributions.setMessage(ctx,publicRecordId,sent.id);

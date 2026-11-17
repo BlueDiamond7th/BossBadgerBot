@@ -2,6 +2,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelec
 import { specChanges } from './specs.js';
 import { BOSSES, bossById, priceKey, partyLimit } from './catalog.js';
 import { formatMeso, partyRevenue, pricedBosses, splitShares, equalRatios, MAX_SPLIT } from './revenue.js';
+import { bossOptionGroups, MAX_PARTY_BOSSES, MAX_PARTY_MEMBERS } from './party-create.js';
 import { clearedValue, entryLimit, entryPrice, entryShare } from './records.js';
 
 export const safe=value=>escapeMarkdown(String(value)).replace(/@/g,'＠');
@@ -178,7 +179,15 @@ export function difficultyPicker(p,bossId) {
 export function registrationModal() {
   return new ModalBuilder().setCustomId('mp:modal:apikey').setTitle('내 API 키 연결').addComponents(row(new TextInputBuilder().setCustomId('apikey').setLabel('캐릭터를 선택해 등록할 개인 API 키').setPlaceholder('메이플스토리용 API 키 · 채팅에 보내지 마세요').setStyle(TextInputStyle.Short).setRequired(true).setMinLength(20).setMaxLength(512)));
 }
-export function creationModal() {return new ModalBuilder().setCustomId('mp:modal:create').setTitle('새 파티 만들기').addComponents(row(new TextInputBuilder().setCustomId('name').setLabel('파티 이름').setPlaceholder('목요일 본캐팟').setMaxLength(60).setStyle(TextInputStyle.Short).setRequired(true)));}
+// One form: name, people (@ search, each brings their strongest character) and up to 12 bosses.
+export function creationModal() {
+  const [classic,grandis]=bossOptionGroups(),bossMenu=(id,options)=>new StringSelectMenuBuilder().setCustomId(id).setRequired(false).setMinValues(0).setMaxValues(Math.min(MAX_PARTY_BOSSES,options.length)).addOptions(options);
+  return new ModalBuilder().setCustomId('mp:modal:create').setTitle('새 파티 만들기').addLabelComponents(
+    new LabelBuilder().setLabel('파티 이름').setTextInputComponent(new TextInputBuilder().setCustomId('name').setPlaceholder('목요일 본캐팟').setMaxLength(60).setStyle(TextInputStyle.Short).setRequired(true)),
+    new LabelBuilder().setLabel('참여할 사람 (@검색, 최대 6명)').setDescription('각자 같은 월드에서 전투력이 가장 높은 캐릭터가 들어가요. 만든 뒤 바꿀 수 있어요.').setUserSelectMenuComponent(new UserSelectMenuBuilder().setCustomId('members').setRequired(false).setMinValues(0).setMaxValues(MAX_PARTY_MEMBERS)),
+    new LabelBuilder().setLabel('보스 · 검밑솔·세렌·검은 마법사').setDescription('두 보스 칸을 합쳐 최대 12개, 보스마다 난이도 1개').setStringSelectMenuComponent(bossMenu('bossA',classic)),
+    new LabelBuilder().setLabel('보스 · 그란디스').setStringSelectMenuComponent(bossMenu('bossB',grandis)));
+}
 export function archiveConfirmation(p) {
   return {content:`**${safe(p.name)}** 파티를 ${p.archived?'복원':'보관'}할까요? 보관한 파티는 다시 복원할 수 있어요.`,embeds:[],components:[row(button(`mp:confirmarchive:${p.id}:${p.version}:${p.archived?'restore':'store'}`,p.archived?'복원하기':'보관하기',ButtonStyle.Primary),button(`mp:detail:${p.id}`,'취소')),home()],allowedMentions:{parse:[]}};
 }
