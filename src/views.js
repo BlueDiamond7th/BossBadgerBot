@@ -70,11 +70,45 @@ const power=value=>{
     return parts.join(' ');
   } catch {return '미수집';}
 };
-// [닉네임](환산 사이트) · 월드 - @등록자 / 직업 / 전투력 : ####
-export function roster(state,page=0,owner='all',eligibleOwnerIds=null,powers=null) {
-  const chars=state.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner));const view=paginate(chars,page,10);
-  const lines=view.items.map(c=>`[**${safe(c.name)}**](${scouterUrl(c.name)}) · ${safe(c.world??'월드 미확인')} - <@${c.ownerId}>${eligibleOwnerIds&&!eligibleOwnerIds.has(c.ownerId)?' · ⚠️ 현재 참가자 아님':''}\n${safe(c.job??'직업 미확인')} / 전투력 : ${power(powers?.get(c.id))}`);
-  return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(lines.join('\n\n')||'등록된 캐릭터가 없어요. 내 API 키 연결을 눌러 주세요.').setFooter({text:`${view.page+1}/${view.pages} 페이지 · 총 ${view.total}개 · 기존 수동 등록과 API로 불러온 캐릭터가 함께 표시돼요.`})],components:[pager(`mp:roster:${owner}`,view.page,view.pages),row(button('mp:register','캐릭터 추가 / 삭제',ButtonStyle.Primary),button('mp:specpicker:0','스펙 변화'),button('mp:bhpicker:0','보스 히스토리'),button('mp:schedulerpicker:0','내 스케줄러')),home()],allowedMentions:{parse:[]}};
+// Characters grouped by registrant (strongest group first), strongest character first inside a group.
+// `stats` maps character id → {power, level} (a plain power string is also accepted).
+const statOf=(stats,id)=>{const v=stats?.get(id);return v&&typeof v==='object'?v:{power:v??null,level:null};};
+const powerValue=v=>{try {return v!=null&&/^\d+$/.test(String(v))?BigInt(v):-1n;} catch {return -1n;}};
+export function rosterPage(state,{page=0,owner='all',minLevel=0,stats=null}={}) {
+  const all=state.characters.filter(c=>c.active&&(owner==='all'||c.ownerId===owner));
+  const levelKnown=c=>Number.isInteger(statOf(stats,c.id).level);
+  const filtered=minLevel?all.filter(c=>levelKnown(c)&&statOf(stats,c.id).level>=minLevel):all;
+  const best=new Map();
+  for(const c of filtered) {const p=powerValue(statOf(stats,c.id).power);if(!best.has(c.ownerId)||p>best.get(c.ownerId)) best.set(c.ownerId,p);}
+  const cmp=(a,b)=>a>b?-1:a<b?1:0;
+  const sorted=[...filtered].sort((a,b)=>cmp(best.get(a.ownerId),best.get(b.ownerId))||(a.ownerId<b.ownerId?-1:a.ownerId>b.ownerId?1:0)||cmp(powerValue(statOf(stats,a.id).power),powerValue(statOf(stats,b.id).power))||a.name.localeCompare(b.name,'ko'));
+  const view=paginate(sorted,page,10);
+  return {...view,sorted,unknownLevel:minLevel?all.filter(c=>!levelKnown(c)).length:0};
+}
+export function roster(state,page=0,owner='all',eligibleOwnerIds=null,stats=null,minLevel=0) {
+  const view=rosterPage(state,{page,owner,minLevel,stats});
+  const blocks=[];let current=null;
+  for(const [i,c] of view.items.entries()) {
+    if(c.ownerId!==current) {
+      current=c.ownerId;
+      const continued=i===0&&view.page>0&&view.sorted[view.page*10-1]?.ownerId===c.ownerId;
+      blocks.push([`<@${c.ownerId}>${continued?' (계속)':''}${eligibleOwnerIds&&!eligibleOwnerIds.has(c.ownerId)?' · ⚠️ 현재 참가자 아님':''}`]);
+    }
+    const st=statOf(stats,c.id);
+    blocks.at(-1).push(`[**${safe(c.name)}**](${scouterUrl(c.name)}) - ${safe(c.world??'월드 미확인')} - Lv.${st.level??'?'}\n${safe(c.job??'직업 미확인')} / 전투력 : ${power(st.power)}`);
+  }
+  const filters=[owner!=='all'?'등록자 1명':null,minLevel?`Lv.${minLevel} 이상${view.unknownLevel?` (레벨 미수집 ${view.unknownLevel}명 제외)`:''}`:null].filter(Boolean);
+  const empty=minLevel||owner!=='all'?'조건에 맞는 캐릭터가 없어요. 필터를 바꿔 보세요.':'등록된 캐릭터가 없어요. 내 API 키 연결을 눌러 주세요.';
+  const id=(p,lvl=minLevel,who=owner)=>`mp:roster:${who}:${p}:${lvl}`;
+  const owners=new UserSelectMenuBuilder().setCustomId(`mp:rosterowner:${minLevel}`).setPlaceholder('등록자로 보기 (@검색)').setMinValues(1).setMaxValues(1);
+  if(owner!=='all') owners.setDefaultUsers(owner);
+  const level=(lvl,label)=>button(`mp:rosterlvl:${owner}:${lvl}`,label,minLevel===lvl?ButtonStyle.Primary:ButtonStyle.Secondary);
+  return {embeds:[base().setTitle('보스방 캐릭터 목록').setDescription(blocks.map(b=>b.join('\n')).join('\n\n')||empty)
+    .setFooter({text:`${view.page+1}/${view.pages} 페이지 · ${view.total}개${filters.length?` · ${filters.join(' · ')}`:''} · 등록자별·전투력순`})],
+    components:[row(button(id(view.page-1),'이전',ButtonStyle.Secondary,view.page===0),button(id(view.page+1),'다음',ButtonStyle.Secondary,view.page>=view.pages-1)),
+      row(owners),
+      row(button(`mp:rosterall:${minLevel}`,'전체 등록자',owner==='all'?ButtonStyle.Primary:ButtonStyle.Secondary),level(0,'전체 레벨'),level(285,'Lv.285+'),level(290,'Lv.290+')),
+      row(button('mp:register','캐릭터 추가 / 삭제',ButtonStyle.Primary),button('mp:specpicker:0','스펙 변화'),button('mp:bhpicker:0','보스 히스토리'),button('mp:schedulerpicker:0','내 스케줄러')),home()],allowedMentions:{parse:[]}};
 }
 export function partyList(state,page=0,archived=false) {
   const view=paginate(state.parties.filter(p=>p.archived===archived),page);
